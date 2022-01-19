@@ -4,7 +4,7 @@ The repo provides notebooks to reproduce examples in the paper:
 
 
 **Redatuming physical systems using symmetric autoencoders**
-Pawan Bharadwaj, Matt Li, Laurent Demanet
+(Pawan Bharadwaj, Matt Li, Laurent Demanet)
 
 ```
 @article{bharadwaj2021redatuming,
