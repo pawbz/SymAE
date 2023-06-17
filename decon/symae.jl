@@ -15,9 +15,9 @@ end
 
 ## get networks
 function get_dense_networks(nt, p, q)
-    l2p = floor.(Int, LinRange(nt, 2 * p, (5,)))
-    lq = floor.(Int, LinRange(nt, q, (5,)))
-    lpq = floor.(Int, LinRange(p + q, nt, (5,)))
+    l2p = floor.(Int, LinRange(nt, 2 * p, 5))
+    lq = floor.(Int, LinRange(nt, q, 5))
+    lpq = floor.(Int, LinRange(p + q, nt, 5))
     senc1 =
         Chain(
             Dense(nt, l2p[2], elu),
@@ -43,7 +43,7 @@ function get_dense_networks(nt, p, q)
             Dense(lpq[3], lpq[4], elu),
             Dense(lpq[4], nt),
         ) |> xpu
-    return @strdict senc1 senc2 nenc dec
+    return (; senc1, senc2, nenc, dec)
 end
 ##
 
@@ -109,7 +109,7 @@ function get_conv_networks(nt, p, q)
         Conv((5,), 64 => 1, ; pad = SamePad()),
     )|> xpu
 
-    return @strdict senc1 senc2 nenc dec
+    return (; senc1, senc2, nenc, dec)
 end
 
 struct BroadcastSenc
@@ -137,7 +137,7 @@ function (m::BroadcastSenc)(x)
     X = mean(X, dims = ndims(X) - 1)
     X = dropdims(X, dims = ndims(X) - 1)
     X = m.senc2(X)
-    X = Flux.stack(fill(X, n[end-1]), length(n) - 1)
+    X = Flux.stack(fill(X, n[end-1]), dims=length(n) - 1)
     return X
 end
 function (m::BroadcastNenc)(x)

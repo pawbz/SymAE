@@ -130,6 +130,7 @@ end
 function (m::BroadcastSenc)(x)
     x = cat(x, dims = 3)
     n = size(x)
+
     X = reshape(x, n[1:end-2]..., n[end-1] * n[end])
     X = m.senc1(X)
     n1 = size(X)
@@ -137,7 +138,7 @@ function (m::BroadcastSenc)(x)
     X = mean(X, dims = ndims(X) - 1)
     X = dropdims(X, dims = ndims(X) - 1)
     X = m.senc2(X)
-    X = Flux.stack(fill(X, n[end-1]), length(n) - 1)
+    X = Flux.stack(fill(X, n[end-1]), dims=length(n) - 1)
     return X
 end
 function (m::BroadcastNenc)(x)
