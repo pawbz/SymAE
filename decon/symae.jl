@@ -1,5 +1,5 @@
 
-using Flux, MLUtils, Statistics, OneHotArrays
+using Flux, MLUtils, Statistics, OneHotArrays, JuliennedArrays
 xpu = gpu
 
 """
@@ -17,13 +17,13 @@ function get_data_iterator(dvec; nd=1000, batchsize=256, ntau=20)
 end
 
 ## get networks
-function get_dense_networks(nt, p, q)
-    l2p = floor.(Int, LinRange(nt, 2 * p, 5))
+function get_dense_networks(nt, p, q; nt_senc=nt, nt_nenc=nt, nt_dec=nt)
+    l2p = floor.(Int, LinRange(nt_senc, 2 * p, 5))
     lq = floor.(Int, LinRange(nt, q, 5))
-    lpq = floor.(Int, LinRange(p + q, nt, 5))
+    lpq = floor.(Int, LinRange(p + q, nt_dec, 5))
     senc1 =
         Chain(
-            Dense(nt, l2p[2], elu),
+            Dense(nt_senc, l2p[2], elu),
             Dense(l2p[2], l2p[3], elu),
             Dense(l2p[3], l2p[4], elu),
             Dense(l2p[4], 2 * p),
@@ -32,21 +32,23 @@ function get_dense_networks(nt, p, q)
 
     nenc =
         Chain(
-            Dense(nt, lq[2], elu),
+            Dense(nt_nenc, lq[2], elu),
             Dense(lq[2], lq[3], elu),
             Dense(lq[3], lq[4], elu),
-            Dense(lq[4], q),
-            Dropout(0.5, dims=(1, 2, 3)),
+            Dense(lq[4], q, elu),
         ) |> xpu
+
+    # produce outputs and dropouts     
+    nenc_drop = Chain(Dense(q, 1, sigmoid)) |> xpu
 
     dec =
         Chain(
             Dense(p + q, lpq[2], elu),
             Dense(lpq[2], lpq[3], elu),
             Dense(lpq[3], lpq[4], elu),
-            Dense(lpq[4], nt),
+            Dense(lpq[4], nt_dec),
         ) |> xpu
-    return (; senc1, senc2, nenc, dec)
+    return (; senc1, senc2, nenc, nenc_drop, dec)
 end
 ##
 
@@ -204,9 +206,41 @@ struct BroadcastSenc
     senc1::Chain
     senc2::Chain
 end
+# Create batches of a time series
+function batch_timeseries(X, s::Int, r::Int)
+    T = size(X, 1)
+    @assert s ≤ T "s cannot be longer than the total series"
+    # X = X[((T - s) % r)+1:end]   # Ensure uniform sequence lengths
+    # [selectdim(X, 1, t:r:T-s+t) for t ∈ 1:s] # Output
+    [X[t:r:T-s+t, :, :] for t ∈ 1:s] # Output
+end
+function apply_shifts(x, onecoldarray)
+    n1, n2, n3 = size(x)
+    x1 = JuliennedArrays.Slices(x, True(), False(), False())
+    oc1 = JuliennedArrays.Slices(onecoldarray, True(), False(), False())
+    X = broadcast(x1, oc1) do xa, oc
+        onecold(oc, batch_timeseries(xa, 50, 1))
+    end
+    reshape(stack(X, dims=(2)), (:, n2, n3))
+end
+struct BroadcastSenc1
+    senc1::Chain
+    senc2::Chain
+end
+
+
 struct BroadcastNenc
     chain::Chain
 end
+
+struct BroadcastTenc
+    chain::Chain
+end
+
+struct BroadcastNenc_timeshift_invariant
+    chain::Chain
+end
+
 struct BroadcastNenc_new{T}
     nenc1::Chain
     nenc2::Chain
@@ -219,9 +253,10 @@ end
 struct BroadcastDec
     chain::Chain
 end
-struct JoinEncs{T1,T2}
+struct JoinEncsDropout{T1,T2,T3}
     senc::T1
     nenc::T2
+    nenc_drop::T3
 end
 
 function (m::BroadcastSenc)(x)
@@ -237,6 +272,24 @@ function (m::BroadcastSenc)(x)
     X = Flux.stack(fill(X, n[end-1]), dims=length(n) - 1)
     return X
 end
+
+function (m::BroadcastSenc1)(x)
+    Xv = batch_timeseries(x, 100, 1)
+    Xs = mapreduce((x, y) -> 0.5f0 .* (x + y), Xv) do x1
+        x1 = cat(x1, dims=3)
+        n = size(x1)
+        X = reshape(x1, n[1:end-2]..., n[end-1] * n[end])
+        X = m.senc1(X)
+        n1 = size(X)
+        X = reshape(X, n1[1:end-1]..., n[end-1], n[end])
+        X = mean(X, dims=ndims(X) - 1)
+        X = dropdims(X, dims=ndims(X) - 1)
+        X = m.senc2(X)
+        X = Flux.stack(fill(X, n[end-1]), dims=length(n) - 1)
+        return X
+    end
+    return Xs
+end
 function (m::BroadcastNenc)(x)
     x = cat(x, dims=3)
     n1, n2, n3 = size(x)
@@ -245,6 +298,20 @@ function (m::BroadcastNenc)(x)
     X = reshape(X, :, n2, n3)
     return X
 end
+
+function (m::BroadcastNenc_timeshift_invariant)(x)
+    Xv = batch_timeseries(x, 50, 1)
+    Xs = map(Xv) do x1
+        x1 = cat(x1, dims=3)
+        n1, n2, n3 = size(x1)
+        X = reshape(x1, :, n2 * n3)
+        X = m.chain(X)
+        X = reshape(X, :, n2, n3)
+        return X
+    end
+    return sum(Xs) / length(Xs)
+end
+
 function (m::BroadcastNenc_new)(x)
     x = cat(x, dims=3)
 
@@ -257,13 +324,13 @@ end
 
 function (m::BroadcastNenc_new2)(x)
     x = cat(x, dims=3)
-        @show size(x)
+    @show size(x)
     n1, n2, n3 = size(x)
     x = chunk(x, n1, dims=1)
     X = mapreduce(vcat, x,) do xx
-        xx=reshape(xx, 1, n2, n3)
+        xx = reshape(xx, 1, n2, n3)
         # @show size(xx)
-        return  m.nenc1(xx)
+        return m.nenc1(xx)
     end
     X = m.nenc2(X)
     return X
@@ -276,13 +343,29 @@ function (m::BroadcastDec)(x)
     X = reshape(X, :, n2, n3)
     return X
 end
-function (m::JoinEncs)(x)
-    return cat(m.senc(x), m.nenc(x), dims=1)
+function (m::JoinEncsDropout)(x)
+    x1 = m.senc(x)
+
+    x = m.nenc(x)
+    # p = m.nenc_drop(x)
+
+    p = 0.5f0
+
+    noise = xpu(randn(Float32, size(x)))
+
+    x2 = x .+ (noise .* p)
+
+    # # add noise
+    # x2 = map(eachslice(x, dims=ntuple(identity, ndims(x))[2:end]), eachslice(p, dims=ntuple(identity, ndims(p))[2:end])) do xx, pp
+    #     xx .+ pp .* xpu(randn(size(xx)))
+    # end |> stack
+
+    return cat(x1, x2, dims=1)
 end
 Flux.@functor BroadcastSenc
 Flux.@functor BroadcastNenc
 Flux.@functor BroadcastDec
-Flux.@functor JoinEncs
+Flux.@functor JoinEncsDropout
 
 
 
