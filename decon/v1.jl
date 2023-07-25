@@ -14,11 +14,8 @@ macro bind(def, element)
     end
 end
 
-# ╔═╡ 8101ba47-b0fb-4aca-8a8b-d298ef2aa2de
-using Deconvolution, DeconvOptim
-
 # ╔═╡ 7c9f2512-12aa-11ee-22c6-7f9abc5509a0
-using Flux, JLD2, Random, MLUtils, DSP, ProgressLogging, Statistics, Zygote, LinearAlgebra, PlutoLinks, PlutoUI, PlutoHooks, OneHotArrays, HDF5, Tullio, Distributions, CUDAKernels, KernelAbstractions, CUDA, PlutoPlotly, FFTW, ImageFiltering, JuliennedArrays, StatsBase
+using Flux, JLD2, Random, MLUtils, DSP, ProgressLogging, Statistics, Zygote, LinearAlgebra, PlutoLinks, PlutoUI, PlutoHooks, OneHotArrays, HDF5, Tullio, Distributions, CUDAKernels, KernelAbstractions, CUDA, PlutoPlotly, FFTW, ImageFiltering, JuliennedArrays, StatsBase, LinearMaps, IterativeSolvers
 
 # ╔═╡ 9e8a8120-a2d0-4898-b5f4-bd69b722fd39
 TableOfContents()
@@ -77,8 +74,24 @@ Deqnames_syn = ["hnd", "kam", "pb2"]
 # ╔═╡ 7e242126-5fbd-4835-9329-6f72de1c9e5c
 md"## Synthetic Data"
 
+# ╔═╡ 442bc064-1b10-406b-bab2-abbe683f6b3c
+# begin
+#     Daug_g = zeros(256, nsamp_train)
+#     toy_green!(Daug_g, true)
+# end;
+
+# ╔═╡ 2ce80f50-cc99-4977-b1f7-68b9251d23ec
+# Daug = augmented_state(data.D, x -> augmentfunc(x, 10, 120));
+
 # ╔═╡ 156f4131-1e42-47f0-b785-023dc02cbd62
 # Daug_win = gaussian_windows(size(data.D[1], 1), size(data.D[1], 2), σ);
+
+# ╔═╡ f24202b9-aea3-4036-bd50-b06556a5b2ca
+# Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x->augmented_state2d_spikes!(x,180, 220));
+# Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x -> augmented_state2d_spikes!(x, 29, 30));
+
+# ╔═╡ 988ec323-fc33-4eaa-b9e0-fdeb05ca5d8f
+Daugloader = DataLoader(Daug[1], batchsize=2, shuffle=true);
 
 # ╔═╡ 8854372d-f734-487f-a299-501fcd4bd21f
 md"## Envelopes"
@@ -93,29 +106,6 @@ begin
     testloss = []
 end;
 
-# ╔═╡ 79e3b16a-0d72-4e51-a635-8eda2d8ef742
-function model2(x)
-
-    # s = sencb(x)
-    # ###### becareful about dropout here
-    # n = nencb(x)
-    # X = mapreduce((x, y) -> cat(x, y, dims=4), unstack(s, 3)) do s1
-    #     s1 = stack(fill(s1, size(n, 3)), dims=3)
-    #     decb(cat(s1, n, dims=1))
-    # end
-
-    # # reduce over source dimension
-    # n1 = dropdims(mean(NN.nenc(X), dims=4), dims=4)
-
-
-    # s1 = dropdims(mean(NN.senc1(X), dims=(2, 3)), dims=(2, 3))
-    # # s1 = drop(s1)
-    # s1 = Flux.stack(fill(s1, size(n1, 2)), dims=2)
-
-    # return decb(cat(s1, n1, dims=1))
-
-end
-
 # ╔═╡ 676642c4-8205-4523-b069-787be1040a5e
 md"""
 ## Train
@@ -124,14 +114,18 @@ md"""
 # ╔═╡ 41f064cc-6c29-41cf-8123-577606d756ad
 md"## Losses"
 
-# ╔═╡ a7655936-9991-427f-ac73-f258b7cbe618
-function loss2(x)
-    Flux.mse(model2(x), x) #+ 100.0 * mean(abs2, nencb(x))
-end
-
-# ╔═╡ bd1e356c-6144-4c85-bccc-2e8bf9ae03f6
-function loss3(x)
-    Flux.mse(model3(x), x) #+ 100.0 * mean(abs2, nencb(x))
+# ╔═╡ d267011b-7f39-4c1a-aeee-7e51b26cd06a
+function update_losses(trainloss, testloss, NN)
+    NN = map(x -> Flux.trainmode!(x, false), NN)
+    NN = map(x -> Flux.testmode!(x, true), NN)
+    dd1 = randobs(d1, 20)
+    dd2 = randobs(d2, 20)
+    l1 = Flux.mse(cat(model(dd1), model(dd2), dims=2), cat(dd1, dd2, dims=2))
+    l2 =
+        Flux.mse(cat(model(d1test), model(d2test), dims=2), cat(d1test, d2test, dims=2))
+    push!(trainloss, l1)
+    push!(testloss, l2)
+    return l1, l2
 end
 
 # ╔═╡ 974459b1-18ba-4dcb-b403-ac1725364eec
@@ -140,17 +134,11 @@ md"## Redatuming"
 # ╔═╡ ace79f71-abc9-4bd6-861f-859693ceca31
 begin
     i = 2
-    j = 7
+    j = 4
 end
-
-# ╔═╡ 551d796d-7867-4959-ae1b-679549be855f
-
 
 # ╔═╡ 25fa4c7c-9ac7-4b8d-ba20-713ffbbd549e
 md"## Plots"
-
-# ╔═╡ 4a99fc76-f095-4f28-981d-0c77069df9ab
-taper
 
 # ╔═╡ b56b260d-5ef4-4571-a0f0-af169c543fc3
 plot(randobs(xde))
@@ -203,6 +191,12 @@ let
     plot(autos)
 end
 
+# ╔═╡ b131c111-f5a5-496d-9c93-4cc6d9b1c171
+plot_data(unstack(randobs(randobs(Daug), 2), dims=2), title="Sample Augmented State")
+
+# ╔═╡ e44a045e-1c10-4aba-a4f2-c931b3cd42f3
+plot_data(unstack(randobs(Daug_win, 2), dims=2), title="Sample Augmented State")
+
 # ╔═╡ 8339c5a0-6fad-451b-b4df-ed22588d806a
 md"## Appendix"
 
@@ -219,6 +213,9 @@ nt1 = maximum(length.(symae.batch_timeseries(1:nt, 100, 1)))
 mapreduce((x, y) -> 0.5f0 .* (x + y), symae.batch_timeseries(1:nt, 5, 1)) do x
     x
 end
+
+# ╔═╡ 2f740254-f7e3-4cb3-8722-98489b3a5a33
+conv = @ingredients("Conv.jl")
 
 # ╔═╡ 061182ee-9068-411e-92dc-861c3210bc3b
 xpu = symae.xpu
@@ -253,7 +250,7 @@ end
 randobs(Deq[3]) |> cpu |> plot
 
 # ╔═╡ 1ccc0ec1-798b-42cb-a91c-5f6b06820ca7
-dataeq = (; D=Deq, nt=401, Dnames=Deqnames, p=200, q=100);
+dataeq = (; D=Deq, nt=401, Dnames=Deqnames, p=200, q=50);
 
 # ╔═╡ c3dce92a-46dc-4af8-816b-c1880858b85b
 envelope(x) = abs.(hilbert(x))
@@ -270,34 +267,19 @@ md"### Toy Green's Function"
 
 # ╔═╡ 34c33216-ef0f-4ec9-a98c-4042d12b33af
 # 
-function toy_green!(x, second_arrival)
+function toy_green!(x, first_arrival, second_arrival)
     nt = size(x, 1)
     nr = size(x, 2)
+	arrival_std = 0.5
+	
     for ir = 1:nr
-
         # first arrival
-        # if (pos_rand_flag)
-        #     # it0 = min(175 + ir, 250)
-        #     it0 = round(Int, rand(truncated(Normal(150, 10), 100, 200)))
-        it0 = 35
-        # else
-        #     it0 = 100
-        # end
-        for ic in 1:1
-            x[it0+(ic-1)*100, ir] = randn()#randn()
-        end
-
-        #       # second arrival - random
-        #       it0 = randobs(50:80)
-        # for ic in 1:3
-        #       x[it0+(ic-1)*100, ir] = randn()#randn()
-        # end
-
-
-        # last arrival - randomly present beteen first two
-        it0 = round(Int, rand(truncated(Normal(second_arrival, 5), 40, 100)))
-        x[it0, ir] = rand(Uniform(0.5, 1))#randn()
-
+        it0 = round(Int, rand(truncated(Normal(first_arrival, arrival_std), 1, nt)))
+        x[it0, ir] = randn()
+        
+        # last arrival - randomly present between first two
+        it1 = round(Int, rand(truncated(Normal(second_arrival, arrival_std), 1, nt)))
+        x[it1, ir] = randn()
     end
     x = x .- mean(x, dims=1)
     return x
@@ -305,12 +287,16 @@ end
 
 # ╔═╡ 77f1447c-377e-433e-8663-69a64d2de141
 begin
-    nsamp_train = 1000
+    nsamp_train = 500
     nsamp_test = 100
     g = map(1:length(s)) do i
         g1 = zeros(128, nsamp_train)
         second_arrival = sample([60])
-        toy_green!(g1, second_arrival)
+        toy_green!(g1, 35, second_arrival)
+
+		# g1 = mapreduce(hcat, -10:10) do tshift
+		# 	circshift(g1, (tshift, 0))
+		# end
         return g1
     end
     # end
@@ -324,19 +310,13 @@ begin
     ##
 end
 
-# ╔═╡ 442bc064-1b10-406b-bab2-abbe683f6b3c
-begin
-    Daug_g = zeros(256, nsamp_train)
-    toy_green!(Daug_g, true)
-end;
-
 # ╔═╡ 4337f434-ecf9-4e14-b5f6-d9659c46ab09
 function multiconv(g, s)
     g = cat(g, dims=3)
     g = permutedims(g, [1, 3, 2])
     s = cat(s, dims=3)
     # s=permutedims(s,[1,3,2]); 
-    d = Flux.conv(g, s, groups=size(g, 2), pad=size(s, 1), flipped=false)
+    d = Flux.conv(g, s, pad=size(s, 1), flipped=false)
     d = permutedims(d, [1, 3, 2])
     d = dropdims(d, dims=3)
     return Float32.(d[2:size(g, 1)+1, :])
@@ -355,7 +335,7 @@ begin
 end;
 
 # ╔═╡ 3b291a4e-2c18-4c24-bfc1-8a148da1b474
-datasyn = (; D=Dsyn, nt=128, Dnames=Dsynnames, p=25, q=10);
+datasyn = (; D=Dsyn, nt=128, Dnames=Dsynnames, p=100, q=25);
 
 # ╔═╡ 8a474346-9e81-42a0-ac21-ad908f6425fb
 md"""## Select Data
@@ -385,23 +365,23 @@ end
 # ╔═╡ a32830cf-3a01-44eb-8d34-0035fc98240c
 begin
     # NN = symae.get_dense_networks(nt, p, q, nt_senc=nt, nt_nenc=nt1, nt_dec=2*nt-nt1)
-    NN = symae.get_dense_networks(data.nt, data.p, data.q, nt_senc=data.nt)
+    NN = symae.get_dense_networks(data.nt, data.p, data.q, true)
 
-    sencb = symae.BroadcastSenc(NN.senc1, NN.senc2)
+    sencb = symae.BroadcastSenc(NN.senc, NN.fsenc, NN.wsenc)
     # nencb = symae.BroadcastNenc_timeshift_invariant(NN.nenc)
-    nencb = symae.BroadcastNenc(NN.nenc)
-	nencb_drop = symae.BroadcastNenc(NN.nenc_drop)
-    decb = symae.BroadcastDec(NN.dec)
-    encb = symae.JoinEncsDropout(sencb, nencb, nencb_drop)
+    nencb = symae.BroadcastNenc(NN.nenc, NN.nenc_μ, NN.nenc_logσ)
+	# nencb_logvar = symae.BroadcastNenc(NN.nenc_logvar)
+    decb = symae.BroadcastDec(NN.dec, NN.dec_logvar)
+    reconstruct = symae.Reconstruct(sencb, nencb, decb)
     # model(x) = symae.apply_shifts(decb(encb(x)), tencb(x))
-    model(x) = decb(encb(x))
+
 end;
 
 # ╔═╡ e8585118-4c68-40f5-9e1c-2b3acb841af6
-NN.senc1
+NN.senc
 
 # ╔═╡ d5dc689b-ffc4-42c8-aecf-46499e86b268
-NN.senc2
+NN.wsenc
 
 # ╔═╡ 1f1fbfc8-cc18-4cf9-a72f-3d28825adcb0
 NN.nenc
@@ -409,23 +389,25 @@ NN.nenc
 # ╔═╡ 9fd00cca-ab31-485d-b756-2c9090d828f5
 NN.dec
 
-# ╔═╡ d267011b-7f39-4c1a-aeee-7e51b26cd06a
-function update_losses(trainloss, testloss, NN)
-    NN = map(x -> Flux.trainmode!(x, false), NN)
-    NN = map(x -> Flux.testmode!(x, true), NN)
-    dd1 = randobs(d1, 20)
-    dd2 = randobs(d2, 20)
-    l1 = Flux.mse(cat(model(dd1), model(dd2), dims=2), cat(dd1, dd2, dims=2))
-    l2 =
-        Flux.mse(cat(model(d1test), model(d2test), dims=2), cat(d1test, d2test, dims=2))
-    push!(trainloss, l1)
-    push!(testloss, l2)
-    return l1, l2
+# ╔═╡ ab139277-786b-43be-8289-617d208e9b04
+function loss_mlvae(x)
+	
+	cx, nμ, nlogσ, xhat, xhat_logvar = reconstruct(x)
+	
+    neg_log_likelihood = 0.5f0 * sum(@. (abs2(xhat - x) / exp(xhat_logvar)) + xhat_logvar)
+	
+	kl_nui =  0.5f0 * sum(@. (exp(2f0 * nlogσ) + nμ^2 -1f0 - 2f0 * nlogσ))
+
+	return neg_log_likelihood + kl_nui
 end
 
-# ╔═╡ ab139277-786b-43be-8289-617d208e9b04
-function loss(x)
-    Flux.mse(model(x), x) #- mean(log,nencb_drop(nencb(x)))
+# ╔═╡ d1ac5752-b77c-4d11-8a22-0c3d273e87ea
+loss = loss_mlvae
+
+# ╔═╡ b886179f-3fa1-496f-9f3f-fd9ec2ece093
+function loss_mse(x)
+	cx, nμ, nlogσ, xhat, xhat_logvar = reconstruct(x)
+	return Flux.mse(xhat, x)
 end
 
 # ╔═╡ b4416bfe-4b5c-4d0c-9864-25a50f720646
@@ -433,76 +415,16 @@ end
 function generate_virtual_data(x, xaug)
     c = selectdim(sencb(x), 2, 1)
     C = Flux.stack(fill(c, size(xaug, 2)), dims=2)
-    return decb(cat(C, nencb(xaug), dims=1))
-end
-
-# ╔═╡ 30879e52-37d2-4f47-8726-abfff1b6eeb8
-function loss_coherent_enforcer(d1, daug)
-    daug = DDaug
-    dv = generate_virtual_data(d1, daug)
-    dvv = generate_virtual_data(dv, d1)
-    Flux.mse(dvv, d1)
-end
-
-# ╔═╡ b6f5c8a8-34ca-4d45-a85f-e13a7e09ef26
-function loss_correlation(d1, daug)
-    dv = generate_virtual_data(daug, d1)
-    C = map(Iterators.product(unstack(dv, dims=2), unstack(d1, dims=2))) do (ddv, dd1)
-        dot(ddv, dd1)
-    end
-    Cbar = diagm(ones_like(diag(C)))
-    return Flux.mse(C, Cbar)
-end
-
-# ╔═╡ bfbca96b-d4f3-483a-9f44-685f24d17c27
-function loss_nuisance_enforcer2(d1, d2, daug)
-
-    dv1 = generate_virtual_data(daug, d1)
-    dvv1 = generate_virtual_data(d1, dv1)
-    dv2 = generate_virtual_data(daug, d2)
-    dvv2 = generate_virtual_data(d2, dv2)
-
-    return Flux.mse(dvv1, d1) + Flux.mse(dvv2, d2)
-end
-
-# ╔═╡ 96efa554-ce23-41e3-ac0c-7e42f4c8c997
-function loss_nuisance_enforcer(d1, d2, daug, reduce_flag=false)
-    daug = DDaug
-    dv1 = generate_virtual_data(d1, daug)
-    dvv1 = generate_virtual_data(daug, dv1)
-    dv2 = generate_virtual_data(d2, daug)
-    dvv2 = generate_virtual_data(daug, dv2)
-    E = [Flux.mse(dvv1, daug), Flux.mse(dvv2, daug)]
-    if (reduce_flag)
-        return sum(E)
-    else
-        return E
-    end
-
-
-
-    # dv = generate_virtual_data(d1, daug)
-    # dvv = generate_virtual_data(d1, dv)
-    # Flux.mse(dvv, dv)
-
-    # dv1 = generate_virtual_data(d1, daug)
-    # dv11 = generate_virtual_data(d1, dv1)
-
-    # dv2 = generate_virtual_data(d2, daug)
-    # dv22 = generate_virtual_data(d2, dv2)
-
-    # dv12 = generate_virtual_data(d1, dv2)
-    # dv21 = generate_virtual_data(d2, dv1)
-    # Flux.mse(dv12, dv1) + Flux.mse(dv21, dv2) + Flux.mse(dv11, dv1) + Flux.mse(dv2, dv22)
-
-    # Flux.mse(dvv, dv)
+	nx, _ = nencb(xaug)
+    xhat, _ = decb(cat(C, nx, dims=1))
+	return xhat
 end
 
 # ╔═╡ c93d0fd0-28ff-462e-8e59-c94b52531bf2
 function redatum(d1, d2)
 
-    d1hat = model(d1)
-    d2hat = model(d2)
+    _, _, _, d1hat, _ = reconstruct(d1, false)
+    _, _, _, d2hat, _ = reconstruct(d2, false)
 
     d12hat = generate_virtual_data(d1, d2)
     d21hat = generate_virtual_data(d2, d1)
@@ -510,14 +432,8 @@ function redatum(d1, d2)
     return map(cpu, (; d1=d1, d2=d2, d1hat, d2hat, d12hat, d21hat))
 end
 
-# ╔═╡ 5a5435fb-1773-4f54-97b1-9a8e013090a3
-function redatum_n(x, xaug, cycle_len)
-    xout = copy(x)
-    for i in 1:cycle_len
-        xout = decb(cat(sencb(xout), nencb(xaug[i]), dims=1))
-    end
-    return xout
-end
+# ╔═╡ 16b09cdc-824f-4426-9f06-3e2da38181e0
+exp.(decb.logvar)
 
 # ╔═╡ 5d41fd67-07b9-49d4-bdeb-f2a459065159
 plot_data(De, ylims=(0, 1), labels=data.Dnames)
@@ -531,6 +447,23 @@ $(@bind σ Select([0.0005, 0.001,  0.005, 0.01, 0.1, 1])); Plot Envelope? $(@bin
 
 # ╔═╡ 5cb4b1b5-a97b-43e1-9f5f-7de3f8dee769
 data.Dnames
+
+# ╔═╡ ae8dbe65-b1d1-4923-94f5-0c559dab9934
+let
+    xaug = randobs(Daug[2], 1)
+    # Random.seed!(2)
+    x = randobs(data.D[2], 1)
+
+
+    @show size(x), size(xaug)
+    xhat = decb(cat(sencb(x), nencb(x), dims=1))
+    xdeconv = redatum_n(x, fill(xaug, 1), 1)
+    xdeconv_x2 = redatum_n(xdeconv, [xaug], 1)
+    # @show sencb(xdeconv)
+    plot_data([vec(x[:, 1, :]), vec(xaug[:, 1, :]), vec(xhat[:, 1, :]), vec(xdeconv[:, 1, :]), vec(xdeconv_x2[:, 1, :]), vec(s2), vec(sencb(xdeconv)), vec(sencb(randobs(data.D[2]))), vec(nencb(xdeconv)), vec(nencb(xaug))], labels=["x", "xaug", "xhat", "xdeconv", "xdeconv_x2", "s2", "cod1", "cod2", "cod3", "cod4"])
+    # plot_data([])
+    # decb(sencb()
+end
 
 # ╔═╡ 8c8f7790-6111-4531-8d3b-adc192757f77
 md"### Augmentation"
@@ -578,9 +511,9 @@ function augmented_state2d_gaussian!(x, itmin, itmax)
         σ = rand(Uniform(0.001, 0.01)) * div(nt, 2)
         @tullio xx[i] *= exp(-0.5f0 * (abs2((i - t0) * inv(σ)))) # Gaussian
         # compute std
-        # stdx = std(xx)
+        stdx = std(xx)
         # normalise using std
-        # @tullio xx[i] *= inv(stdx)
+        @tullio xx[i] *= inv(stdx)
     end
     return reshape(stack(x, dims=(2)), (:, n2))
 end
@@ -590,12 +523,14 @@ function augmented_state2d_spikes!(x, itmin, itmax)
     nt, n2 = size(x)
     x = map(eachslice(x, dims=(2))) do xx
         t0 = sample(itmin:itmax)#, aweights(E)[itmin:itmax])
+		fill!(xx, zero(eltype(x)))
         CUDA.@allowscalar xx[t0] = randn()
-        return xx
+    
         # compute std
-        # stdx = std(xx)
+        stdx = std(xx)
         # normalise using std
-        # @tullio xx[i] *= inv(stdx)
+        @tullio xx[i] *= inv(stdx)
+		return xx
     end
     return reshape(stack(x, dims=(2)), (:, n2))
 end
@@ -606,23 +541,6 @@ Activate $(@bind augment CheckBox(default=false)) Select type? $(@bind augmentfu
 
 """
 
-# ╔═╡ 0401e0d5-f14d-4a40-92d4-90e322901b11
-function augmented_state(D, func)
-    D1 = map(deepcopy(D)) do d
-        func(d)
-        return d
-    end
-end
-
-# ╔═╡ 91577acb-6a82-4266-a7c5-172409a6adf6
-function augmented_state(nt, nr, func)
-    d = xpu(zeros(nt, nr))
-    func(d)
-end
-
-# ╔═╡ 2ce80f50-cc99-4977-b1f7-68b9251d23ec
-Daug = augmented_state(data.D, x -> augmentfunc(x, 10, 120));
-
 # ╔═╡ 235ec0aa-5ef6-47ce-85b2-b96407266cd3
 if (augment)
     X = symae.get_data_iterator(vcat(data.D, Daug), batchsize=64, ntau=50)
@@ -630,161 +548,39 @@ else
     X = symae.get_data_iterator(data.D, batchsize=64, ntau=50)
 end
 
-# ╔═╡ 3e4d5162-268d-471d-a837-07d741becbf2
-((nencb_drop(nencb(first(X)))))
-
-# ╔═╡ fa7d5001-0ee8-48b3-a4f7-a5c048bbf1f5
-mean(log, (nencb_drop(nencb(first(X)))))
-
 # ╔═╡ 0046f186-a278-453b-9513-34a9a3ebacaa
 loss(first(X))
-
-# ╔═╡ 013d1274-c201-4aa0-b42a-da32a8793176
-# ╠═╡ disabled = true
-#=╠═╡
-loss2(first(X));
-  ╠═╡ =#
 
 # ╔═╡ 845daeed-b4f7-4675-9d63-144668d5d7a3
 function update(nepoch, NN)
     # p = Progress(nepoch, showspeed = true)
     ps = Flux.params(values(NN)...)
-
-    NN = map(x -> Flux.trainmode!(x, true), NN)
-    NN = map(x -> Flux.testmode!(x, false), NN)
     @progress name = "training" for epoch = 1:nepoch
-
-
         for x in X
             # x = apply_random_time_shifts!(x, -50:50)
             # gs = Flux.gradient(() -> loss(x), ps) # compute gradient
-            gs = Flux.gradient(() -> loss(x) # 
-                # + loss3(x)
-                # + loss_correlation(d2, d1)
-                # + loss_coherent_enforcer(d1, daug) + loss_coherent_enforcer(d2, daug) + loss_nuisance_enforcer(d1, d2, daug, true)
-                # + loss_nuisance_enforcer2(d1, d2, daug)
-                , ps)
-
+            gs = Flux.gradient(() -> loss(x), ps)
 
             # compute gradient
             Flux.Optimise.update!(opt, ps, gs) # update parameters
+
         end
-
-
-        #  for (d1, d2, daug) in zip(D1loader, D2loader, Daugloader)
-        #          # x = apply_random_time_shifts!(x, -50:50)
-        #          # gs = Flux.gradient(() -> loss(x), ps) # compute gradient
-        # gs = Flux.gradient(() -> loss_coherent_enforcer(d1, daug) + loss_coherent_enforcer(d2, daug), ps)
-        #          Flux.Optimise.update!(opt, ps, gs) # update parameters
-        #      end
-        # ========
-
-        # 				 for (d1, d2, daug) in zip(D1loader, D2loader, Daugloader)
-        #             # x = apply_random_time_shifts!(x, -50:50)
-        #             # gs = Flux.gradient(() -> loss(x), ps) # compute gradient
-        # 			gs = Flux.gradient(() -> loss_nuisance_enforcer2(d1, d2, daug), ps)
-        #             Flux.Optimise.update!(opt, ps, gs) # update parameters
-        #         end
-        # # ========
-
-
-        # ltrain, ltest = update_losses(trainloss, testloss, NN)
-        # ProgressMeter.next!(
-        #     p;
-        #     showvalues = [(:epoch, epoch), (:train_loss, ltrain), (:test_loss, ltest)],
-        # )
     end
-    NN = map(x -> Flux.trainmode!(x, false), NN)
-    NN = map(x -> Flux.testmode!(x, true), NN)
-
     return NN
 end
 
 # ╔═╡ 2fd9a503-cf69-4c80-8af1-ac68a7a18886
 trained = @use_memo([]) do
-    update(200, NN)
+    update(100, NN)
     true
 end
-
-# ╔═╡ ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
-let
-    trained
-    p = mapreduce(hcat, 1:4) do k
-        x = data.D[2]
-        # x = Daug_win
-        # x = Daug[1]
-        x1 = data.D[k]
-        # Random.seed!(2)
-        xde = generate_virtual_data(x1, x)
-        @show size(xde), size(x)
-
-        X1 = cpu(xde[:, :, 1])
-        X2 = cpu(x)
-        # xcor = fftshift(lucy(X1, X2, iterations=21))
-        # return cpu(randobs(xde[:, :, 1]))
-        # return randobs(X1)
-        # return mean(abs.(hilbert(X1)), dims=2)
-        xcor = fftshift(real.(ifft((fft(X1, 1)) ./ (fft(X2, 1)), 1)), 1)
-        xcorp = mean(cpu(xcor), dims=2)
-        xcorp = penvelope ? envelope(xcorp) : xcorp
-        return xcorp
-    end
-    plot(p)
-end
-
-# ╔═╡ e647dcc5-52e4-4dc4-8095-f40283060308
-let
-    x = randobs(X)
-    mx = model2(x)
-    plot(hcat(cpu(x[:, 1, 1]), cpu(mx[:, 1, 1])))
-end
-
-# ╔═╡ 988ec323-fc33-4eaa-b9e0-fdeb05ca5d8f
-Daugloader = DataLoader(Daug[1], batchsize=2, shuffle=true);
-
-# ╔═╡ b131c111-f5a5-496d-9c93-4cc6d9b1c171
-plot_data(unstack(randobs(randobs(Daug), 2), dims=2), title="Sample Augmented State")
 
 # ╔═╡ 0e899d57-0eb4-4d20-816c-3055ae186295
 begin
     trained
-    # redatumed = redatum(data.D[i], data.D[j])
-    redatumed = redatum(Daug[i], data.D[j])
+    redatumed = redatum(data.D[i], data.D[j])
+    # redatumed = redatum(Daug[i], data.D[j])
     # redatumed = redatum(data.D[i], Daug_win)
-end
-
-# ╔═╡ 72e70ad4-b955-459c-9377-9802ba9bf6fb
-begin
-    trained
-    plot_data([redatumed.d1[:, iplt2], redatumed.d1hat[:, iplt2]], title="$(data.Dnames[i]) reconstruction"; labels=["true", "reconstructed"])
-end
-
-# ╔═╡ a21cf4fd-3e86-4ff9-9446-4825bfaedfac
-begin
-    trained
-    plot_data([redatumed.d2[:, iplt2], redatumed.d2hat[:, iplt2]], title="$(data.Dnames[j]) reconstruction", labels=["true", "reconstructed"])
-end
-
-# ╔═╡ 56ca859e-fb7f-4ff9-a77d-f98635b626f4
-let
-    trained
-    d1newhat = redatumed.d12hat[:, iplt2]
-    dvec = map([s[i], d1newhat, redatumed.d2[:, iplt2]]) do d
-        penvelope ? envelope(d) : d
-    end
-    ylims = penvelope ? (0, 10) : (-8, 8)
-    plot_data(dvec, title="Coherent: $(data.Dnames[i]); Nuisance: $(data.Dnames[j])", labels=["true", "virtual", "redatuming peak"], ylims=ylims, opacitys=[0.5, 1, 0.5])
-end
-
-# ╔═╡ 114880f0-825a-48ec-92df-69a84a2a9492
-let
-    trained
-    d2newhat = redatumed.d21hat[:, iplt2]
-    dvec = map([s[j], d2newhat, redatumed.d1[:, iplt2]]) do d
-        penvelope ? envelope(d) : d
-    end
-    ylims = penvelope ? (0, 10) : (-8, 8)
-    plot_data(dvec, title="Coherent: $(data.Dnames[j]); Nuisance: $(data.Dnames[i])", labels=["true", "virtual", "redatuming peak"], ylims=ylims, opacitys=[0.5, 1, 0.5])
 end
 
 # ╔═╡ fa7fca08-3051-4931-bcf1-7002013c4a08
@@ -820,29 +616,86 @@ plot(hcat(abs.(rfft(cpu(redatumed.d1newhat)[:, iplt2])), abs.(rfft(cpu(redatumed
 # ╔═╡ 58ad1103-1ede-40d8-91db-45a17f311552
 plot(real.(ifft(fft(cpu(redatumed.d1newhat)[:, iplt2]) ./ (1.0f-10 .+ fft(g2[:, iplt2])))))
 
-# ╔═╡ ae8dbe65-b1d1-4923-94f5-0c559dab9934
-let
-    xaug = randobs(Daug[2], 1)
-    # Random.seed!(2)
-    x = randobs(data.D[2], 1)
-
-
-    @show size(x), size(xaug)
-    xhat = decb(cat(sencb(x), nencb(x), dims=1))
-    xdeconv = redatum_n(x, fill(xaug, 1), 1)
-    xdeconv_x2 = redatum_n(xdeconv, [xaug], 1)
-    # @show sencb(xdeconv)
-    plot_data([vec(x[:, 1, :]), vec(xaug[:, 1, :]), vec(xhat[:, 1, :]), vec(xdeconv[:, 1, :]), vec(xdeconv_x2[:, 1, :]), vec(s2), vec(sencb(xdeconv)), vec(sencb(randobs(data.D[2]))), vec(nencb(xdeconv)), vec(nencb(xaug))], labels=["x", "xaug", "xhat", "xdeconv", "xdeconv_x2", "s2", "cod1", "cod2", "cod3", "cod4"])
-    # plot_data([])
-    # decb(sencb()
+# ╔═╡ 72e70ad4-b955-459c-9377-9802ba9bf6fb
+begin
+    trained
+    plot_data([redatumed.d1[:, iplt2], redatumed.d1hat[:, iplt2]], title="$(data.Dnames[i]) reconstruction"; labels=["true", "reconstructed"])
 end
 
-# ╔═╡ f24202b9-aea3-4036-bd50-b06556a5b2ca
-# Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x->augmented_state2d_spikes!(x,180, 220));
-Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x -> augmented_state2d_spikes!(x, 29, 30));
+# ╔═╡ a21cf4fd-3e86-4ff9-9446-4825bfaedfac
+begin
+    trained
+    plot_data([redatumed.d2[:, iplt2], redatumed.d2hat[:, iplt2]], title="$(data.Dnames[j]) reconstruction", labels=["true", "reconstructed"])
+end
 
-# ╔═╡ e44a045e-1c10-4aba-a4f2-c931b3cd42f3
-plot_data(unstack(randobs(Daug_win, 2), dims=2), title="Sample Augmented State")
+# ╔═╡ 56ca859e-fb7f-4ff9-a77d-f98635b626f4
+let
+    trained
+    d1newhat = redatumed.d12hat[:, iplt2]
+    dvec = map([s[i], d1newhat, redatumed.d2[:, iplt2]]) do d
+        penvelope ? envelope(d) : d
+    end
+    ylims = penvelope ? (0, 10) : (-8, 8)
+    plot_data(dvec, title="Coherent: $(data.Dnames[i]); Nuisance: $(data.Dnames[j])", labels=["true", "virtual", "redatuming peak"], ylims=ylims, opacitys=[0.5, 1, 0.5])
+end
+
+# ╔═╡ 114880f0-825a-48ec-92df-69a84a2a9492
+let
+    trained
+    d2newhat = redatumed.d21hat[:, iplt2]
+    dvec = map([s[j], d2newhat, redatumed.d1[:, iplt2]]) do d
+        penvelope ? envelope(d) : d
+    end
+    ylims = penvelope ? (0, 10) : (-8, 8)
+    plot_data(dvec, title="Coherent: $(data.Dnames[j]); Nuisance: $(data.Dnames[i])", labels=["true", "virtual", "redatuming peak"], ylims=ylims, opacitys=[0.5, 1, 0.5])
+end
+
+# ╔═╡ ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
+let
+    trained
+    p = mapreduce(hcat, 4:4) do k
+        x = data.D[7]
+        # x = Daug_win
+        # x = Daug[1]
+        x1 = data.D[k]
+        # Random.seed!(2)
+        xde = generate_virtual_data(x1, x)
+
+        virtual_data = cpu(xde[:, :, 1])
+        impulsive_source_data = cpu(x)
+
+		pa_conv=conv.Conv.Pconv(Float32, dsize=size(virtual_data), gsize=size(impulsive_source_data), ssize=(data.nt,), g=impulsive_source_data, d=virtual_data)
+		paA=conv.Conv.operator(pa_conv, conv.Conv.G())
+		s=zeros(Float32, data.nt); IterativeSolvers.lsmr!(s, paA, vec(virtual_data))
+		return penvelope ? envelope(s) : s
+        # xcor = fftshift(lucy(X1, X2, iterations=21))
+        # return cpu(randobs(xde[:, :, 1]))
+        # return randobs(X1)
+        # return mean(abs.(hilbert(X1)), dims=2)
+        # xcor = fftshift(real.(ifft((fft(X1, 1)) ./ (fft(X2, 1)), 1)), 1)
+        # xcorp = mean(cpu(xcor), dims=2)
+        # xcorp = 
+        # return xcorp
+    end
+    plot(p)
+end
+
+# ╔═╡ 1f28b6ae-bb9d-4cf2-9f45-3a9e9b4a9be3
+exp.(reconstruct(first(X), false)[3])
+
+# ╔═╡ 0401e0d5-f14d-4a40-92d4-90e322901b11
+function augmented_state(D, func)
+    D1 = map(deepcopy(D)) do d
+        func(d)
+        return d
+    end
+end
+
+# ╔═╡ 91577acb-6a82-4266-a7c5-172409a6adf6
+function augmented_state(nt, nr, func)
+    d = xpu(zeros(nt, nr))
+    func(d)
+end
 
 # ╔═╡ 49ed3c9b-1ea1-4615-ad1f-8196289ccf71
 function gaussian_windows(nt, nr, σ)
@@ -918,17 +771,17 @@ PLUTO_PROJECT_TOML_CONTENTS = """
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CUDAKernels = "72cfdca4-0801-4ab0-bf6a-d52aa10adc57"
 DSP = "717857b8-e6f2-59f4-9121-6e50c889abd2"
-DeconvOptim = "03e7cd2f-1a03-4ea9-b59b-760a446df67f"
-Deconvolution = "41ba435c-a500-5816-a783-a9707c6f5f3a"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
+IterativeSolvers = "42fd0dbc-a981-5370-80f2-aaf504508153"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 JuliennedArrays = "5cadff95-7770-533d-a838-a1bf817ee6e0"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LinearMaps = "7a12625a-238d-50fd-b39a-03d52299707e"
 MLUtils = "f1d291b0-491e-4a28-83b9-f70985020b54"
 OneHotArrays = "0b1bfda6-eb8a-41d2-88d8-f5af5cad476f"
 PlutoHooks = "0ff47ea0-7a50-410d-8455-4348d5de0774"
@@ -946,16 +799,16 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 CUDA = "~4.0.1"
 CUDAKernels = "~0.4.7"
 DSP = "~0.7.8"
-DeconvOptim = "~0.7.1"
-Deconvolution = "~1.1.1"
 Distributions = "~0.25.96"
 FFTW = "~1.7.1"
 Flux = "~0.13.17"
 HDF5 = "~0.16.15"
 ImageFiltering = "~0.7.5"
+IterativeSolvers = "~0.9.2"
 JLD2 = "~0.4.31"
 JuliennedArrays = "~0.4.0"
 KernelAbstractions = "~0.8.6"
+LinearMaps = "~3.10.1"
 MLUtils = "~0.4.3"
 OneHotArrays = "~0.2.4"
 PlutoHooks = "~0.0.5"
@@ -974,7 +827,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "ac3b3d324f583b0b6817a69ed2dd82b2c80ce173"
+project_hash = "4a1e27a68be335ebef3719b3ef0c428c692f2fbb"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1041,12 +894,6 @@ deps = ["UnsafeAtomics"]
 git-tree-sha1 = "c06a868224ecba914baa6942988e2f2aade419be"
 uuid = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 version = "0.1.0"
-
-[[deps.AxisAlgorithms]]
-deps = ["LinearAlgebra", "Random", "SparseArrays", "WoodburyMatrices"]
-git-tree-sha1 = "66771c8d21c8ff5e3a93379480a2307ac36863f7"
-uuid = "13072b0f-2c55-5437-9ae7-d433b7a33950"
-version = "1.0.1"
 
 [[deps.BFloat16s]]
 deps = ["LinearAlgebra", "Printf", "Random", "Test"]
@@ -1265,18 +1112,6 @@ version = "1.0.0"
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
-[[deps.DeconvOptim]]
-deps = ["ChainRulesCore", "FFTW", "FillArrays", "Interpolations", "LineSearches", "LinearAlgebra", "Noise", "Optim", "Requires", "SnoopPrecompile", "Statistics", "StatsBase", "Tullio", "Zygote"]
-git-tree-sha1 = "fb5432f644e61207293dbc32d642add2a53b580a"
-uuid = "03e7cd2f-1a03-4ea9-b59b-760a446df67f"
-version = "0.7.1"
-
-[[deps.Deconvolution]]
-deps = ["FFTW"]
-git-tree-sha1 = "154fcb2726a7ec3055993a3a8b9cc816117e9a3d"
-uuid = "41ba435c-a500-5816-a783-a9707c6f5f3a"
-version = "1.1.1"
-
 [[deps.DefineSingletons]]
 git-tree-sha1 = "0fba8b706d0178b4dc7fd44a96a92382c9065c2c"
 uuid = "244e2a9f-e319-4986-a169-4d1fe445cd52"
@@ -1384,22 +1219,6 @@ deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
 git-tree-sha1 = "e17cc4dc2d0b0b568e80d937de8ed8341822de67"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
 version = "1.2.0"
-
-[[deps.FiniteDiff]]
-deps = ["ArrayInterface", "LinearAlgebra", "Requires", "Setfield", "SparseArrays"]
-git-tree-sha1 = "c6e4a1fbe73b31a3dea94b1da449503b8830c306"
-uuid = "6a86dc24-6348-571c-b903-95158fe2bd41"
-version = "2.21.1"
-
-    [deps.FiniteDiff.extensions]
-    FiniteDiffBandedMatricesExt = "BandedMatrices"
-    FiniteDiffBlockBandedMatricesExt = "BlockBandedMatrices"
-    FiniteDiffStaticArraysExt = "StaticArrays"
-
-    [deps.FiniteDiff.weakdeps]
-    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
-    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
-    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
@@ -1545,12 +1364,6 @@ version = "2023.1.0+0"
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
-[[deps.Interpolations]]
-deps = ["Adapt", "AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Random", "Ratios", "Requires", "SharedArrays", "SparseArrays", "StaticArrays", "WoodburyMatrices"]
-git-tree-sha1 = "721ec2cf720536ad005cb38f50dbba7b02419a15"
-uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
-version = "0.14.7"
-
 [[deps.IrrationalConstants]]
 git-tree-sha1 = "630b497eafcc20001bba38a4651b327dcfc491d2"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
@@ -1560,6 +1373,12 @@ version = "0.2.2"
 git-tree-sha1 = "4ced6667f9974fc5c5943fa5e2ef1ca43ea9e450"
 uuid = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
 version = "1.8.0"
+
+[[deps.IterativeSolvers]]
+deps = ["LinearAlgebra", "Printf", "Random", "RecipesBase", "SparseArrays"]
+git-tree-sha1 = "1169632f425f79429f245113b775a0e3d121457c"
+uuid = "42fd0dbc-a981-5370-80f2-aaf504508153"
+version = "0.9.2"
 
 [[deps.IteratorInterfaceExtensions]]
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
@@ -1656,15 +1475,19 @@ version = "1.10.2+0"
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 
-[[deps.LineSearches]]
-deps = ["LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "Printf"]
-git-tree-sha1 = "7bbea35cec17305fc70a0e5b4641477dc0789d9d"
-uuid = "d3d80556-e9d4-5f37-9878-2ab0fcc64255"
-version = "7.2.0"
-
 [[deps.LinearAlgebra]]
 deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+
+[[deps.LinearMaps]]
+deps = ["LinearAlgebra", "SparseArrays", "Statistics"]
+git-tree-sha1 = "a1348b9b7c87d45fa859314d56e8a87ace20561e"
+uuid = "7a12625a-238d-50fd-b39a-03d52299707e"
+version = "3.10.1"
+weakdeps = ["ChainRulesCore"]
+
+    [deps.LinearMaps.extensions]
+    LinearMapsChainRulesCoreExt = "ChainRulesCore"
 
 [[deps.LogExpFunctions]]
 deps = ["DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
@@ -1782,12 +1605,6 @@ version = "0.3.4"
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2022.10.11"
 
-[[deps.NLSolversBase]]
-deps = ["DiffResults", "Distributed", "FiniteDiff", "ForwardDiff"]
-git-tree-sha1 = "a0b464d183da839699f4c79e7606d9d186ec172c"
-uuid = "d41bc354-129a-5804-8e4c-c37616107c6c"
-version = "7.8.3"
-
 [[deps.NNlib]]
 deps = ["Adapt", "ChainRulesCore", "LinearAlgebra", "Pkg", "Random", "Requires", "Statistics"]
 git-tree-sha1 = "33ad5a19dc6730d592d8ce91c14354d758e53b0e"
@@ -1821,12 +1638,6 @@ version = "0.1.5"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
-
-[[deps.Noise]]
-deps = ["ImageCore", "PoissonRandom", "Random"]
-git-tree-sha1 = "1427315f223bc7c754c1d97a12c2b5fc059dafbc"
-uuid = "81d43f40-5267-43b7-ae1c-8b967f377efa"
-version = "0.3.2"
 
 [[deps.OffsetArrays]]
 deps = ["Adapt"]
@@ -1867,12 +1678,6 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Pk
 git-tree-sha1 = "13652491f6856acfd2db29360e1bbcd4565d04f1"
 uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
 version = "0.5.5+0"
-
-[[deps.Optim]]
-deps = ["Compat", "FillArrays", "ForwardDiff", "LineSearches", "LinearAlgebra", "NLSolversBase", "NaNMath", "Parameters", "PositiveFactorizations", "Printf", "SparseArrays", "StatsBase"]
-git-tree-sha1 = "e3a6546c1577bfd701771b477b794a52949e7594"
-uuid = "429524aa-4258-5aef-a3af-852621145aeb"
-version = "1.7.6"
 
 [[deps.Optimisers]]
 deps = ["ChainRulesCore", "Functors", "LinearAlgebra", "Random", "Statistics"]
@@ -1944,12 +1749,6 @@ git-tree-sha1 = "b478a748be27bd2f2c73a7690da219d0844db305"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.51"
 
-[[deps.PoissonRandom]]
-deps = ["Random"]
-git-tree-sha1 = "a0f1159c33f846aa77c3f30ebbc69795e5327152"
-uuid = "e409e4f3-bfea-5376-8464-e040bb5c01ab"
-version = "0.4.4"
-
 [[deps.Polynomials]]
 deps = ["LinearAlgebra", "RecipesBase"]
 git-tree-sha1 = "3aa2bb4982e575acd7583f01531f241af077b163"
@@ -1965,12 +1764,6 @@ version = "3.2.13"
     ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
     MakieCore = "20f20a25-4f0e-4fdf-b5d1-57303727442b"
     MutableArithmetics = "d8a4904e-b15c-11e9-3269-09a3773c0cb0"
-
-[[deps.PositiveFactorizations]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "17275485f373e6673f7e7f97051f703ed5b15b20"
-uuid = "85a6dd25-e78a-55b7-8502-1745935b8125"
-version = "0.2.4"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -2025,16 +1818,6 @@ git-tree-sha1 = "043da614cc7e95c703498a491e2c21f58a2b8111"
 uuid = "e6cf234a-135c-5ec9-84dd-332b85af5143"
 version = "1.5.3"
 
-[[deps.Ratios]]
-deps = ["Requires"]
-git-tree-sha1 = "1342a47bf3260ee108163042310d26f2be5ec90b"
-uuid = "c84ed2f1-dad5-54f0-aa8e-dbefe2724439"
-version = "0.4.5"
-weakdeps = ["FixedPointNumbers"]
-
-    [deps.Ratios.extensions]
-    RatiosFixedPointNumbersExt = "FixedPointNumbers"
-
 [[deps.RealDot]]
 deps = ["LinearAlgebra"]
 git-tree-sha1 = "9f0a1b71baaf7650f4fa8a1d168c7fb6ee41f0c9"
@@ -2088,10 +1871,6 @@ deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
 git-tree-sha1 = "e2cc6d8c88613c05e1defb55170bf5ff211fbeac"
 uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
 version = "1.1.1"
-
-[[deps.SharedArrays]]
-deps = ["Distributed", "Mmap", "Random", "Serialization"]
-uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
 [[deps.ShowCases]]
 git-tree-sha1 = "7f534ad62ab2bd48591bdeac81994ea8c445e4a5"
@@ -2314,12 +2093,6 @@ git-tree-sha1 = "ead6292c02aab389cb29fe64cc9375765ab1e219"
 uuid = "d80eeb9a-aca5-4d75-85e5-170c8b632249"
 version = "0.1.1"
 
-[[deps.WoodburyMatrices]]
-deps = ["LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "de67fa59e33ad156a590055375a30b23c40299d3"
-uuid = "efce3f68-66dc-5838-9240-27a6d6f5f9b6"
-version = "0.5.5"
-
 [[deps.Zlib_jll]]
 deps = ["Libdl"]
 uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
@@ -2417,34 +2190,26 @@ version = "17.4.0+0"
 # ╟─6cb037f4-96ef-4067-a886-5faecf2e82a8
 # ╠═ebaee61b-9df2-4fee-b7cc-9c5ed25f8cdc
 # ╠═a32830cf-3a01-44eb-8d34-0035fc98240c
-# ╠═79e3b16a-0d72-4e51-a635-8eda2d8ef742
-# ╠═3e4d5162-268d-471d-a837-07d741becbf2
-# ╠═fa7d5001-0ee8-48b3-a4f7-a5c048bbf1f5
 # ╠═0046f186-a278-453b-9513-34a9a3ebacaa
-# ╠═013d1274-c201-4aa0-b42a-da32a8793176
 # ╠═e8585118-4c68-40f5-9e1c-2b3acb841af6
 # ╠═d5dc689b-ffc4-42c8-aecf-46499e86b268
 # ╠═1f1fbfc8-cc18-4cf9-a72f-3d28825adcb0
 # ╠═9fd00cca-ab31-485d-b756-2c9090d828f5
 # ╟─676642c4-8205-4523-b069-787be1040a5e
 # ╠═2fd9a503-cf69-4c80-8af1-ac68a7a18886
+# ╠═d1ac5752-b77c-4d11-8a22-0c3d273e87ea
 # ╠═845daeed-b4f7-4675-9d63-144668d5d7a3
 # ╟─41f064cc-6c29-41cf-8123-577606d756ad
 # ╠═d267011b-7f39-4c1a-aeee-7e51b26cd06a
 # ╠═ab139277-786b-43be-8289-617d208e9b04
-# ╠═a7655936-9991-427f-ac73-f258b7cbe618
-# ╠═bd1e356c-6144-4c85-bccc-2e8bf9ae03f6
-# ╠═30879e52-37d2-4f47-8726-abfff1b6eeb8
-# ╠═b6f5c8a8-34ca-4d45-a85f-e13a7e09ef26
-# ╠═bfbca96b-d4f3-483a-9f44-685f24d17c27
-# ╠═96efa554-ce23-41e3-ac0c-7e42f4c8c997
+# ╠═b886179f-3fa1-496f-9f3f-fd9ec2ece093
 # ╟─974459b1-18ba-4dcb-b403-ac1725364eec
 # ╠═b4416bfe-4b5c-4d0c-9864-25a50f720646
 # ╠═c93d0fd0-28ff-462e-8e59-c94b52531bf2
 # ╠═ace79f71-abc9-4bd6-861f-859693ceca31
 # ╠═0e899d57-0eb4-4d20-816c-3055ae186295
-# ╠═551d796d-7867-4959-ae1b-679549be855f
-# ╠═e647dcc5-52e4-4dc4-8095-f40283060308
+# ╠═1f28b6ae-bb9d-4cf2-9f45-3a9e9b4a9be3
+# ╠═16b09cdc-824f-4426-9f06-3e2da38181e0
 # ╟─25fa4c7c-9ac7-4b8d-ba20-713ffbbd549e
 # ╟─5d41fd67-07b9-49d4-bdeb-f2a459065159
 # ╟─72e70ad4-b955-459c-9377-9802ba9bf6fb
@@ -2453,9 +2218,7 @@ version = "17.4.0+0"
 # ╟─56ca859e-fb7f-4ff9-a77d-f98635b626f4
 # ╟─114880f0-825a-48ec-92df-69a84a2a9492
 # ╠═5cb4b1b5-a97b-43e1-9f5f-7de3f8dee769
-# ╠═4a99fc76-f095-4f28-981d-0c77069df9ab
 # ╠═ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
-# ╠═8101ba47-b0fb-4aca-8a8b-d298ef2aa2de
 # ╠═e44c9a2b-cc8e-4a2a-8be7-dfa3c184a9c0
 # ╠═20793d1d-391e-46d9-8fef-19ee66fe2b59
 # ╠═fa7fca08-3051-4931-bcf1-7002013c4a08
@@ -2468,11 +2231,11 @@ version = "17.4.0+0"
 # ╠═58ad1103-1ede-40d8-91db-45a17f311552
 # ╠═9af909db-27ee-403a-be8d-0662926be389
 # ╠═ae8dbe65-b1d1-4923-94f5-0c559dab9934
-# ╠═5a5435fb-1773-4f54-97b1-9a8e013090a3
 # ╟─8339c5a0-6fad-451b-b4df-ed22588d806a
 # ╠═7c9f2512-12aa-11ee-22c6-7f9abc5509a0
 # ╠═818c44ef-86bf-410d-b698-8cff6c6969b1
 # ╠═d4034569-cd45-4a98-94d2-0de39491201e
+# ╠═2f740254-f7e3-4cb3-8722-98489b3a5a33
 # ╠═061182ee-9068-411e-92dc-861c3210bc3b
 # ╠═c3dce92a-46dc-4af8-816b-c1880858b85b
 # ╠═029baae4-1ea8-4656-93b3-b97f9c2f261d
