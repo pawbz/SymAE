@@ -56,8 +56,8 @@ plot(cpu(D[1][:, 100]))
 # ╔═╡ 9732fb0d-19de-4da8-b9d9-d1996d7bea92
 md"## Earthquake Data"
 
-# ╔═╡ 5e7917a8-31c2-42bb-9319-9658c76eb8ec
-eqdata = h5open("eq_sample_data_deep.hdf5", "r");
+# ╔═╡ a9d351ed-3d65-44f2-aeeb-e173cd6237ed
+eqdata=[h5open("eq_sample_data_deep.hdf5", "r"), h5open("eq_sample_data_shallow.hdf5", "r")]
 
 # ╔═╡ f2de68d3-c15c-4041-8fd0-7ec5ac0a4fad
 function taper(x)
@@ -128,7 +128,7 @@ md"## Redatuming"
 # ╔═╡ ace79f71-abc9-4bd6-861f-859693ceca31
 begin
     i = 4
-    j = 7
+    j = 8
 end
 
 # ╔═╡ 25fa4c7c-9ac7-4b8d-ba20-713ffbbd549e
@@ -255,14 +255,16 @@ dataeq_syn = (; D=Deq_syn, nt=401, Dnames=Deqnames_syn, p=200, q=100, itmin=150,
 
 # ╔═╡ f057ea85-82e7-443f-8d98-554cb1b7fbe7
 begin
-    Deq = map(keys(eqdata)) do eq
-        mapreduce(hcat, keys(eqdata[eq])) do pixel
-            resampled_data = resample(Array(eqdata[eq][pixel]["data"]), 0.5, dims=1)
+    Deq = mapreduce(vcat, eqdata) do eqset
+		map(keys(eqset)) do eq
+        mapreduce(hcat, keys(eqset[eq])) do pixel
+            resampled_data = resample(Array(eqset[eq][pixel]["data"]), 0.5, dims=1)
             # resampled_zero_lag_data = remove_linear_phase(resampled_data)
             Flux.normalise(xpu(taper(resampled_data)), dims=1)
         end
+		end
     end
-    Deqnames = keys(eqdata)
+    Deqnames = mapreduce(keys, vcat, eqdata)
     Deq = vcat(Deq, Deq_syn)
     Deqnames = vcat(Deqnames, Deqnames_syn)
 end
@@ -792,7 +794,7 @@ end
 let
     trained
 	# peak = gaussian_window(data.nt, [peak_alpha], peak_std)
-	peak = random_spike(data.nt, [peak_it],3)
+	peak = random_spike(data.nt, [peak_it],-20)
 
 	nμ, _ = nencb(peak)
 @show norm(nμ, 2)
@@ -809,19 +811,19 @@ end
 # ╔═╡ 65d9a932-5e53-4bc8-8bee-5a9dd5efbc1a
 let
 	trained
-	peaks = random_spike(data.nt, 1:data.nt, 1.0)
+	peaks = random_spike(data.nt, data.itmin:data.itmax, 1.0)
 	nμ0, nlogσ = nencb(data.D[i])
 	nμ0 = permutedims(nμ0, [1,3,2])
 	nlogσ = permutedims(nlogσ, [1,3,2])
-	amps = Float32.(collect(range(-10, 10, length=100)))
+	amps = Float32.(collect(range(-30, 30, length=100)))
 	X = mapreduce(hcat, amps) do amp
 		nμ, _ = nencb(peaks .* amp)
 	neg_log_likelihood = @. (abs2(nμ0 - nμ) / exp(2.f0 * nlogσ)) + 2.f0 * nlogσ
 		    vec(minimum(sum(neg_log_likelihood, dims=1), dims=3))
 	end
 	X = X ./ maximum(X)
-	@show argmin(X), amps[argmin(X)[2]]
-	plot(heatmap(x=amps, y=1:data.nt, z=X))
+	@show collect(data.itmin:data.itmax)[argmin(X)[1]], amps[argmin(X)[2]]
+	plot(heatmap(x=amps, y=data.itmin:data.itmax, z=X))
 		# minimum
 end
 
@@ -2282,7 +2284,7 @@ version = "17.4.0+0"
 # ╠═76b6baa5-b480-44c2-8249-35348bb8b412
 # ╠═f9740d59-a5be-4d96-83fd-5a23e30ce609
 # ╟─9732fb0d-19de-4da8-b9d9-d1996d7bea92
-# ╠═5e7917a8-31c2-42bb-9319-9658c76eb8ec
+# ╠═a9d351ed-3d65-44f2-aeeb-e173cd6237ed
 # ╠═f2de68d3-c15c-4041-8fd0-7ec5ac0a4fad
 # ╠═9b9b2e5e-5da9-451d-95bf-f46de2d703ca
 # ╠═1318a949-95bb-47a0-ab10-95483eea9925
