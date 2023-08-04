@@ -251,7 +251,7 @@ end;
 randobs(Deq_syn[3]) |> cpu |> plot
 
 # ╔═╡ 151f75ce-facf-434a-9c77-83ea005cdac9
-dataeq_syn = (; D=Deq_syn, nt=401, Dnames=Deqnames_syn, p=200, q=100);
+dataeq_syn = (; D=Deq_syn, nt=401, Dnames=Deqnames_syn, p=200, q=100, itmin=150, itmax=200);
 
 # ╔═╡ f057ea85-82e7-443f-8d98-554cb1b7fbe7
 begin
@@ -271,7 +271,7 @@ end
 randobs(Deq[3]) |> cpu |> plot
 
 # ╔═╡ 1ccc0ec1-798b-42cb-a91c-5f6b06820ca7
-dataeq = (; D=Deq, nt=401, Dnames=Deqnames, p=200, q=50);
+dataeq = (; D=Deq, nt=401, Dnames=Deqnames, p=200, q=50, itmin=150, itmax=250);
 
 # ╔═╡ c3dce92a-46dc-4af8-816b-c1880858b85b
 envelope(x) = abs.(hilbert(x))
@@ -357,7 +357,7 @@ begin
 end;
 
 # ╔═╡ 3b291a4e-2c18-4c24-bfc1-8a148da1b474
-datasyn = (; D=Dsyn, nt=128, Dnames=Dsynnames, p=100, q=25);
+datasyn = (; D=Dsyn, nt=128, Dnames=Dsynnames, p=100, q=25, itmin=20, itmax=60);
 
 # ╔═╡ 8a474346-9e81-42a0-ac21-ad908f6425fb
 md"""## Select Data
@@ -560,14 +560,14 @@ function augmented_state2d_spikes!(x, itmin, itmax)
     nt, n2 = size(x)
     x = map(eachslice(x, dims=(2))) do xx
 		E = abs.(hilbert(cpu(xx)))
-        t0 = sample(itmin:itmax, aweights(E)[itmin:itmax])
+        t0 = sample(itmin:itmax)#, aweights(E)[itmin:itmax])
 		fill!(xx, zero(eltype(x)))
-        CUDA.@allowscalar xx[t0] = randn()
+        CUDA.@allowscalar xx[t0] = sample([-5.0, 5.0])
     
-        # compute std
-        stdx = std(xx)
-        # normalise using std
-        @tullio xx[i] *= inv(stdx)
+        # # compute std
+        # stdx = std(xx)
+        # # normalise using std
+        # @tullio xx[i] *= inv(stdx)
 		return xx
     end
     return reshape(stack(x, dims=(2)), (:, n2))
@@ -594,7 +594,7 @@ function augmented_state(nt, nr, func)
 end
 
 # ╔═╡ 2ce80f50-cc99-4977-b1f7-68b9251d23ec
-Daug = augmented_state(data.D, x -> augmentfunc(x, 10, 120));
+Daug = augmented_state(data.D, x -> augmentfunc(x, data.itmin, data.itmax));
 
 # ╔═╡ 235ec0aa-5ef6-47ce-85b2-b96407266cd3
 if (augment)
@@ -792,7 +792,7 @@ end
 let
     trained
 	# peak = gaussian_window(data.nt, [peak_alpha], peak_std)
-	peak = random_spike(data.nt, [peak_it], -20)
+	peak = random_spike(data.nt, [peak_it],3)
 
 	nμ, _ = nencb(peak)
 @show norm(nμ, 2)
@@ -808,7 +808,21 @@ end
 
 # ╔═╡ 65d9a932-5e53-4bc8-8bee-5a9dd5efbc1a
 let
+	trained
 	peaks = random_spike(data.nt, 1:data.nt, 1.0)
+	nμ0, nlogσ = nencb(data.D[i])
+	nμ0 = permutedims(nμ0, [1,3,2])
+	nlogσ = permutedims(nlogσ, [1,3,2])
+	amps = Float32.(collect(range(-10, 10, length=100)))
+	X = mapreduce(hcat, amps) do amp
+		nμ, _ = nencb(peaks .* amp)
+	neg_log_likelihood = @. (abs2(nμ0 - nμ) / exp(2.f0 * nlogσ)) + 2.f0 * nlogσ
+		    vec(minimum(sum(neg_log_likelihood, dims=1), dims=3))
+	end
+	X = X ./ maximum(X)
+	@show argmin(X), amps[argmin(X)[2]]
+	plot(heatmap(x=amps, y=1:data.nt, z=X))
+		# minimum
 end
 
 # ╔═╡ faf4b3c1-62ee-4b1d-a72d-c2758d9bed32
