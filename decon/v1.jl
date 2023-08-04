@@ -80,18 +80,12 @@ md"## Synthetic Data"
 #     toy_green!(Daug_g, true)
 # end;
 
-# ╔═╡ 2ce80f50-cc99-4977-b1f7-68b9251d23ec
-# Daug = augmented_state(data.D, x -> augmentfunc(x, 10, 120));
-
 # ╔═╡ 156f4131-1e42-47f0-b785-023dc02cbd62
 # Daug_win = gaussian_windows(size(data.D[1], 1), size(data.D[1], 2), σ);
 
 # ╔═╡ f24202b9-aea3-4036-bd50-b06556a5b2ca
 # Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x->augmented_state2d_spikes!(x,180, 220));
 # Daug_win = augmented_state(size(data.D[1], 1), size(data.D[1], 2), x -> augmented_state2d_spikes!(x, 29, 30));
-
-# ╔═╡ 988ec323-fc33-4eaa-b9e0-fdeb05ca5d8f
-Daugloader = DataLoader(Daug[1], batchsize=2, shuffle=true);
 
 # ╔═╡ 8854372d-f734-487f-a299-501fcd4bd21f
 md"## Envelopes"
@@ -133,12 +127,45 @@ md"## Redatuming"
 
 # ╔═╡ ace79f71-abc9-4bd6-861f-859693ceca31
 begin
-    i = 2
-    j = 4
+    i = 4
+    j = 7
 end
 
 # ╔═╡ 25fa4c7c-9ac7-4b8d-ba20-713ffbbd549e
 md"## Plots"
+
+# ╔═╡ ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
+# ╠═╡ disabled = true
+#=╠═╡
+let
+    trained
+    p = mapreduce(hcat, 4:4) do k
+        x = data.D[7]
+        # x = Daug_win
+        # x = Daug[1]
+        x1 = data.D[k]
+        # Random.seed!(2)
+        xde = generate_virtual_data(x1, x)
+
+        virtual_data = cpu(xde[:, :, 1])
+        impulsive_source_data = cpu(x)
+
+		pa_conv=conv.Conv.Pconv(Float32, dsize=size(virtual_data), gsize=size(impulsive_source_data), ssize=(data.nt,), g=impulsive_source_data, d=virtual_data)
+		paA=conv.Conv.operator(pa_conv, conv.Conv.G())
+		s=zeros(Float32, data.nt); IterativeSolvers.lsmr!(s, paA, vec(virtual_data))
+		return penvelope ? envelope(s) : s
+        # xcor = fftshift(lucy(X1, X2, iterations=21))
+        # return cpu(randobs(xde[:, :, 1]))
+        # return randobs(X1)
+        # return mean(abs.(hilbert(X1)), dims=2)
+        # xcor = fftshift(real.(ifft((fft(X1, 1)) ./ (fft(X2, 1)), 1)), 1)
+        # xcorp = mean(cpu(xcor), dims=2)
+        # xcorp = 
+        # return xcorp
+    end
+    plot(p)
+end
+  ╠═╡ =#
 
 # ╔═╡ b56b260d-5ef4-4571-a0f0-af169c543fc3
 plot(randobs(xde))
@@ -158,15 +185,15 @@ end
 
 # ╔═╡ 702b10d3-d727-41ee-8af9-45c17ef57bfe
 begin
-    s = map(1:50) do i
-        if (i == 1)
-            s1 = rpad(gaussian(10, 0.05, zerophase=false), 100, 0.0)
-        elseif (i == 2)
-            s1 = rpad([1.0], 100, 0.0)
-        else
+    s = map(1:10) do i
+        # if (i == 1)
+        #     s1 = rpad(gaussian(10, 0.05, zerophase=false), 100, 0.0)
+        # elseif (i == 2)
+        #     s1 = rpad([1.0], 100, 0.0)
+        # else
 
             s1 = rpad(randn(10), 100, 0.0)
-        end
+        # end
         return s1 #.- mean(s1)
     end
     # apply_gaussian3d!(S, t0=50, σ=0.1)
@@ -180,9 +207,6 @@ begin
     ##
 end
 
-# ╔═╡ e44c9a2b-cc8e-4a2a-8be7-dfa3c184a9c0
-plot((fftshift(s[4])))
-
 # ╔═╡ 20793d1d-391e-46d9-8fef-19ee66fe2b59
 let
     autos = mapreduce(hcat, s) do s1
@@ -190,9 +214,6 @@ let
     end
     plot(autos)
 end
-
-# ╔═╡ b131c111-f5a5-496d-9c93-4cc6d9b1c171
-plot_data(unstack(randobs(randobs(Daug), 2), dims=2), title="Sample Augmented State")
 
 # ╔═╡ e44a045e-1c10-4aba-a4f2-c931b3cd42f3
 plot_data(unstack(randobs(Daug_win, 2), dims=2), title="Sample Augmented State")
@@ -278,7 +299,7 @@ function toy_green!(x, first_arrival, second_arrival)
         x[it0, ir] = randn()
         
         # last arrival - randomly present between first two
-        it1 = round(Int, rand(truncated(Normal(second_arrival, arrival_std), 1, nt)))
+        it1 = round(Int, rand(truncated(Normal(second_arrival, 4.0), 1, nt)))
         x[it1, ir] = randn()
     end
     x = x .- mean(x, dims=1)
@@ -287,11 +308,12 @@ end
 
 # ╔═╡ 77f1447c-377e-433e-8663-69a64d2de141
 begin
-    nsamp_train = 500
+    nsamp_train = 1000
     nsamp_test = 100
     g = map(1:length(s)) do i
         g1 = zeros(128, nsamp_train)
-        second_arrival = sample([60])
+        second_arrival = 40
+		# second_arrival = min(60 + (i-1) * 1, 100)
         toy_green!(g1, 35, second_arrival)
 
 		# g1 = mapreduce(hcat, -10:10) do tshift
@@ -342,12 +364,6 @@ md"""## Select Data
 $(@bind data Select([datasyn=>"Synthetic Toy", dataeq=>"Real Data", dataeq_syn=>"Synthetic Earthquakes"]))
 """
 
-# ╔═╡ 371f8fea-2bf3-4245-92cc-8116cf965260
-D1loader = DataLoader(data.D[1], batchsize=128, shuffle=true);
-
-# ╔═╡ 4fc2dd8b-fa92-4de6-a94d-558d1d6c8273
-D2loader = DataLoader(data.D[4], batchsize=128, shuffle=true);
-
 # ╔═╡ 543b3e59-3583-49fd-9900-a55fb80129c3
 let
     dplot = cpu(randobs(randobs(data.D), 2))
@@ -367,21 +383,32 @@ begin
     # NN = symae.get_dense_networks(nt, p, q, nt_senc=nt, nt_nenc=nt1, nt_dec=2*nt-nt1)
     NN = symae.get_dense_networks(data.nt, data.p, data.q, true)
 
-    sencb = symae.BroadcastSenc(NN.senc, NN.fsenc, NN.wsenc)
+    sencb = symae.BroadcastSenc(NN.senc, NN.senc_μ, NN.senc_loginvvar)
     # nencb = symae.BroadcastNenc_timeshift_invariant(NN.nenc)
     nencb = symae.BroadcastNenc(NN.nenc, NN.nenc_μ, NN.nenc_logσ)
 	# nencb_logvar = symae.BroadcastNenc(NN.nenc_logvar)
     decb = symae.BroadcastDec(NN.dec, NN.dec_logvar)
-    reconstruct = symae.Reconstruct(sencb, nencb, decb)
+
+	reconstruct = symae.Reconstruct(sencb, nencb, decb)
+    # reconstruct = symae.Reconstruct_Dropout(sencb, nencb, decb)
+
+	
     # model(x) = symae.apply_shifts(decb(encb(x)), tencb(x))
 
 end;
 
+# ╔═╡ 6f8686db-741f-4159-ba0a-ad42e0b359ab
+# reconstruct_coherent_nuisance = symae.Reconstruct_Coherent_Nuisance(sencb, nencb, decb)
+reconstruct_coherent_nuisance = symae.Reconstruct_Shuffle_Coherent(sencb, nencb, decb)
+
+# ╔═╡ 1d9792dd-fad8-4dd8-8b4c-b77780ce2103
+function loss_mse_coherent_nuisance(x)
+	output = reconstruct_coherent_nuisance(x)
+	return Flux.mse(output[4], x)
+end
+
 # ╔═╡ e8585118-4c68-40f5-9e1c-2b3acb841af6
 NN.senc
-
-# ╔═╡ d5dc689b-ffc4-42c8-aecf-46499e86b268
-NN.wsenc
 
 # ╔═╡ 1f1fbfc8-cc18-4cf9-a72f-3d28825adcb0
 NN.nenc
@@ -389,20 +416,28 @@ NN.nenc
 # ╔═╡ 9fd00cca-ab31-485d-b756-2c9090d828f5
 NN.dec
 
+# ╔═╡ 2ca2f747-a132-49d9-be2b-d508319d809e
+exp(0.5*cpu(NN.dec_logvar)[1])
+
 # ╔═╡ ab139277-786b-43be-8289-617d208e9b04
 function loss_mlvae(x)
 	
-	cx, nμ, nlogσ, xhat, xhat_logvar = reconstruct(x)
+	cx, nμ, nlogσ, xhat, xhat_logvar, cμ, clogσ = reconstruct(x)
 	
     neg_log_likelihood = 0.5f0 * sum(@. (abs2(xhat - x) / exp(xhat_logvar)) + xhat_logvar)
 	
-	kl_nui =  0.5f0 * sum(@. (exp(2f0 * nlogσ) + nμ^2 -1f0 - 2f0 * nlogσ))
+	kl_nui =  0.5f0 * sum(@. (exp(2f0 * nlogσ) + abs2(nμ) -1f0 - 2f0 * nlogσ))
+	kl_c = 0.5f0 * sum(@. (exp(2f0 * clogσ) + abs2(cμ) -1f0 - 2f0 * clogσ))
 
-	return neg_log_likelihood + kl_nui
+	return neg_log_likelihood + kl_nui + kl_c
 end
 
 # ╔═╡ d1ac5752-b77c-4d11-8a22-0c3d273e87ea
-loss = loss_mlvae
+begin
+	loss = loss_mlvae
+	# loss = loss_mse
+	# loss(x) = loss_mse(x) + loss_mse_coherent_nuisance(x)
+end
 
 # ╔═╡ b886179f-3fa1-496f-9f3f-fd9ec2ece093
 function loss_mse(x)
@@ -413,7 +448,8 @@ end
 # ╔═╡ b4416bfe-4b5c-4d0c-9864-25a50f720646
 # use virtual data where source is used from x and nuisance from xaug
 function generate_virtual_data(x, xaug)
-    c = selectdim(sencb(x), 2, 1)
+	CX, _, _ = sencb(x)
+    c = selectdim(CX, 2, 1)
     C = Flux.stack(fill(c, size(xaug, 2)), dims=2)
 	nx, _ = nencb(xaug)
     xhat, _ = decb(cat(C, nx, dims=1))
@@ -423,8 +459,8 @@ end
 # ╔═╡ c93d0fd0-28ff-462e-8e59-c94b52531bf2
 function redatum(d1, d2)
 
-    _, _, _, d1hat, _ = reconstruct(d1, false)
-    _, _, _, d2hat, _ = reconstruct(d2, false)
+    _, _, _, d1hat, _, _, _= reconstruct(d1, false)
+    _, _, _, d2hat, _, _, _= reconstruct(d2, false)
 
     d12hat = generate_virtual_data(d1, d2)
     d21hat = generate_virtual_data(d2, d1)
@@ -440,30 +476,31 @@ plot_data(De, ylims=(0, 1), labels=data.Dnames)
 
 # ╔═╡ 28b4d791-acd8-4f40-8c34-838af73fbac4
 md"""
-Redatuming peak $(@bind iplt2 Slider(1:size(data.D[1], 2), show_value=true));
+instance # $(@bind iplt2 Slider(1:size(data.D[1], 2), show_value=true));
 Gaussian standard deviation
 $(@bind σ Select([0.0005, 0.001,  0.005, 0.01, 0.1, 1])); Plot Envelope? $(@bind penvelope CheckBox())
 """
 
+# ╔═╡ e44c9a2b-cc8e-4a2a-8be7-dfa3c184a9c0
+let 
+	s = map(s) do s1
+		penvelope ? envelope(s1) : s1
+	end
+plot_data(s[1:7], ylims=(-10, 10))
+end
+
+# ╔═╡ 55e7c25f-1a15-4a92-95e0-694247e59d8d
+md"""
+Redatuming peak # $(@bind peak_it Slider(1:data.nt, show_value=true));
+Gaussian standard deviation
+$(@bind peak_std Select([0.0005, 0.001,  0.005, 0.01, 0.1, 1]));
+"""
+
+# ╔═╡ 8dd6951d-47f5-45f0-a82e-c6eb9676d0c7
+unstack(data.D[i], dims=2)
+
 # ╔═╡ 5cb4b1b5-a97b-43e1-9f5f-7de3f8dee769
 data.Dnames
-
-# ╔═╡ ae8dbe65-b1d1-4923-94f5-0c559dab9934
-let
-    xaug = randobs(Daug[2], 1)
-    # Random.seed!(2)
-    x = randobs(data.D[2], 1)
-
-
-    @show size(x), size(xaug)
-    xhat = decb(cat(sencb(x), nencb(x), dims=1))
-    xdeconv = redatum_n(x, fill(xaug, 1), 1)
-    xdeconv_x2 = redatum_n(xdeconv, [xaug], 1)
-    # @show sencb(xdeconv)
-    plot_data([vec(x[:, 1, :]), vec(xaug[:, 1, :]), vec(xhat[:, 1, :]), vec(xdeconv[:, 1, :]), vec(xdeconv_x2[:, 1, :]), vec(s2), vec(sencb(xdeconv)), vec(sencb(randobs(data.D[2]))), vec(nencb(xdeconv)), vec(nencb(xaug))], labels=["x", "xaug", "xhat", "xdeconv", "xdeconv_x2", "s2", "cod1", "cod2", "cod3", "cod4"])
-    # plot_data([])
-    # decb(sencb()
-end
 
 # ╔═╡ 8c8f7790-6111-4531-8d3b-adc192757f77
 md"### Augmentation"
@@ -522,7 +559,8 @@ end
 function augmented_state2d_spikes!(x, itmin, itmax)
     nt, n2 = size(x)
     x = map(eachslice(x, dims=(2))) do xx
-        t0 = sample(itmin:itmax)#, aweights(E)[itmin:itmax])
+		E = abs.(hilbert(cpu(xx)))
+        t0 = sample(itmin:itmax, aweights(E)[itmin:itmax])
 		fill!(xx, zero(eltype(x)))
         CUDA.@allowscalar xx[t0] = randn()
     
@@ -541,15 +579,38 @@ Activate $(@bind augment CheckBox(default=false)) Select type? $(@bind augmentfu
 
 """
 
+# ╔═╡ 0401e0d5-f14d-4a40-92d4-90e322901b11
+function augmented_state(D, func)
+    D1 = map(deepcopy(D)) do d
+        func(d)
+        return d
+    end
+end
+
+# ╔═╡ 91577acb-6a82-4266-a7c5-172409a6adf6
+function augmented_state(nt, nr, func)
+    d = xpu(zeros(nt, nr))
+    func(d)
+end
+
+# ╔═╡ 2ce80f50-cc99-4977-b1f7-68b9251d23ec
+Daug = augmented_state(data.D, x -> augmentfunc(x, 10, 120));
+
 # ╔═╡ 235ec0aa-5ef6-47ce-85b2-b96407266cd3
 if (augment)
-    X = symae.get_data_iterator(vcat(data.D, Daug), batchsize=64, ntau=50)
+    X = symae.get_data_iterator(vcat(data.D, Daug), batchsize=128, ntau=50)
 else
-    X = symae.get_data_iterator(data.D, batchsize=64, ntau=50)
+    X = symae.get_data_iterator(data.D, batchsize=128, ntau=50)
 end
 
 # ╔═╡ 0046f186-a278-453b-9513-34a9a3ebacaa
 loss(first(X))
+
+# ╔═╡ 1493fbaa-d176-4d2c-8211-576bef53f670
+loss_mse(first(X))
+
+# ╔═╡ 01373f36-37ad-444c-b1a9-34c144e70c4f
+loss_mse_coherent_nuisance(first(X))
 
 # ╔═╡ 845daeed-b4f7-4675-9d63-144668d5d7a3
 function update(nepoch, NN)
@@ -571,7 +632,7 @@ end
 
 # ╔═╡ 2fd9a503-cf69-4c80-8af1-ac68a7a18886
 trained = @use_memo([]) do
-    update(100, NN)
+    update(500, NN)
     true
 end
 
@@ -579,7 +640,7 @@ end
 begin
     trained
     redatumed = redatum(data.D[i], data.D[j])
-    # redatumed = redatum(Daug[i], data.D[j])
+    # redatumed = redatum(Daug[i], data.D[i])
     # redatumed = redatum(data.D[i], Daug_win)
 end
 
@@ -650,51 +711,39 @@ let
     plot_data(dvec, title="Coherent: $(data.Dnames[j]); Nuisance: $(data.Dnames[i])", labels=["true", "virtual", "redatuming peak"], ylims=ylims, opacitys=[0.5, 1, 0.5])
 end
 
-# ╔═╡ ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
+# ╔═╡ 1f28b6ae-bb9d-4cf2-9f45-3a9e9b4a9be3
+exp.(reconstruct(first(X), false)[3]) |> mean
+
+# ╔═╡ e24a31ba-5d4a-4b12-b254-99a9f499c496
 let
     trained
-    p = mapreduce(hcat, 4:4) do k
-        x = data.D[7]
-        # x = Daug_win
-        # x = Daug[1]
-        x1 = data.D[k]
-        # Random.seed!(2)
-        xde = generate_virtual_data(x1, x)
+	xsample = randobs(X)
+    xsample_hat = reconstruct_coherent_nuisance(xsample)[3]
 
-        virtual_data = cpu(xde[:, :, 1])
-        impulsive_source_data = cpu(x)
+	i=randobs(1:size(xsample, 2))
+	j=randobs(1:size(xsample, 3))
 
-		pa_conv=conv.Conv.Pconv(Float32, dsize=size(virtual_data), gsize=size(impulsive_source_data), ssize=(data.nt,), g=impulsive_source_data, d=virtual_data)
-		paA=conv.Conv.operator(pa_conv, conv.Conv.G())
-		s=zeros(Float32, data.nt); IterativeSolvers.lsmr!(s, paA, vec(virtual_data))
-		return penvelope ? envelope(s) : s
-        # xcor = fftshift(lucy(X1, X2, iterations=21))
-        # return cpu(randobs(xde[:, :, 1]))
-        # return randobs(X1)
-        # return mean(abs.(hilbert(X1)), dims=2)
-        # xcor = fftshift(real.(ifft((fft(X1, 1)) ./ (fft(X2, 1)), 1)), 1)
-        # xcorp = mean(cpu(xcor), dims=2)
-        # xcorp = 
-        # return xcorp
-    end
-    plot(p)
+    plot_data([xsample[:, i, j], xsample_hat[:, i, j]])# ylims=(-1, 1))
 end
 
-# ╔═╡ 1f28b6ae-bb9d-4cf2-9f45-3a9e9b4a9be3
-exp.(reconstruct(first(X), false)[3])
+# ╔═╡ b131c111-f5a5-496d-9c93-4cc6d9b1c171
+plot_data(unstack(randobs(randobs(Daug), 2), dims=2), title="Sample Augmented State")
 
-# ╔═╡ 0401e0d5-f14d-4a40-92d4-90e322901b11
-function augmented_state(D, func)
-    D1 = map(deepcopy(D)) do d
-        func(d)
-        return d
-    end
-end
+# ╔═╡ ae8dbe65-b1d1-4923-94f5-0c559dab9934
+let
+    xaug = randobs(Daug[2], 1)
+    # Random.seed!(2)
+    x = randobs(data.D[2], 1)
 
-# ╔═╡ 91577acb-6a82-4266-a7c5-172409a6adf6
-function augmented_state(nt, nr, func)
-    d = xpu(zeros(nt, nr))
-    func(d)
+
+    @show size(x), size(xaug)
+    xhat = decb(cat(sencb(x), nencb(x), dims=1))
+    xdeconv = redatum_n(x, fill(xaug, 1), 1)
+    xdeconv_x2 = redatum_n(xdeconv, [xaug], 1)
+    # @show sencb(xdeconv)
+    plot_data([vec(x[:, 1, :]), vec(xaug[:, 1, :]), vec(xhat[:, 1, :]), vec(xdeconv[:, 1, :]), vec(xdeconv_x2[:, 1, :]), vec(s2), vec(sencb(xdeconv)), vec(sencb(randobs(data.D[2]))), vec(nencb(xdeconv)), vec(nencb(xaug))], labels=["x", "xaug", "xhat", "xdeconv", "xdeconv_x2", "s2", "cod1", "cod2", "cod3", "cod4"])
+    # plot_data([])
+    # decb(sencb()
 end
 
 # ╔═╡ 49ed3c9b-1ea1-4615-ad1f-8196289ccf71
@@ -713,6 +762,68 @@ function gaussian_windows(nt, nr, σ)
     end
     dnew = Flux.normalise(dnew, dims=1)
     return xpu(dnew)
+end
+
+# ╔═╡ 79b2204e-d053-4a0f-9b60-97f385fc2916
+function gaussian_window(nt, alphavec, σ)
+	dnew1 = mapreduce(hcat, alphavec) do alpha
+	it0 = round(Int, nt * (alpha - 0.5) + 1)
+	dnew = cat(circshift(gaussian(nt, σ), it0), dims=2)
+    dnew = dnew / std(dnew)
+		return dnew
+	end
+    return xpu(dnew1)
+end
+
+# ╔═╡ 6ab31402-fb93-4ef3-a589-5eba61d2cc56
+function random_spike(nt, it0vec, amp=randn())
+	dnew1 = mapreduce(hcat, it0vec) do it0
+	# it0 = round(Int, nt * (alpha - 0.5) + 1)
+	d=zeros(nt);
+	d[it0]=amp
+		dnew=cat(d, dims=2)
+	# dnew = cat(circshift(d, it0), dims=2)
+		return dnew
+	end
+    return xpu(dnew1)
+end
+
+# ╔═╡ a03516b1-7ecd-4e78-9fd4-df0469a7e502
+let
+    trained
+	# peak = gaussian_window(data.nt, [peak_alpha], peak_std)
+	peak = random_spike(data.nt, [peak_it], -20)
+
+	nμ, _ = nencb(peak)
+@show norm(nμ, 2)
+	d1newhat = generate_virtual_data(data.D[i], peak)
+	d2newhat = generate_virtual_data(data.D[j], peak)
+	
+    dvec = map([vec(peak), vec(d1newhat), vec(d2newhat), s[i], s[j]]) do d
+        penvelope ? envelope(cpu(d)) : cpu(d)
+    end
+    ylims = penvelope ? (0, 10) : (-8, 8)
+    plot_data(dvec, title="Using Impulsive Nuisance", labels=["redatuming peak", "virtual $(data.Dnames[i])", "virtual $(data.Dnames[j])", "source $(data.Dnames[i])", "source $(data.Dnames[j])"], ylims=ylims, opacitys=[0.5, 1, 0.5, 0.5, 0.5])
+end
+
+# ╔═╡ 65d9a932-5e53-4bc8-8bee-5a9dd5efbc1a
+let
+	peaks = random_spike(data.nt, 1:data.nt, 1.0)
+end
+
+# ╔═╡ faf4b3c1-62ee-4b1d-a72d-c2758d9bed32
+let
+	trained
+peaks = random_spike(data.nt, range(0.5, 0.51, length=1000))
+	virtual_xcorr = map(1:7) do ii
+virtual = cpu(generate_virtual_data(data.D[ii], peaks))
+	virtual_xcorr = mean(ifft(conj.(fft(cpu(peaks), 1)) .* (fft(virtual, 1)), 1), dims=2)
+	virtual_xcorr = fftshift(vec(real.(virtual_xcorr)))
+		return penvelope ? envelope(virtual_xcorr) : virtual_xcorr
+	end
+	plot_data(virtual_xcorr)
+	
+	
 end
 
 # ╔═╡ 4d3c8d2f-3feb-41b1-9180-7b358a914b6b
@@ -2179,9 +2290,6 @@ version = "17.4.0+0"
 # ╠═156f4131-1e42-47f0-b785-023dc02cbd62
 # ╠═f24202b9-aea3-4036-bd50-b06556a5b2ca
 # ╠═235ec0aa-5ef6-47ce-85b2-b96407266cd3
-# ╠═371f8fea-2bf3-4245-92cc-8116cf965260
-# ╠═4fc2dd8b-fa92-4de6-a94d-558d1d6c8273
-# ╠═988ec323-fc33-4eaa-b9e0-fdeb05ca5d8f
 # ╠═543b3e59-3583-49fd-9900-a55fb80129c3
 # ╠═b131c111-f5a5-496d-9c93-4cc6d9b1c171
 # ╠═e44a045e-1c10-4aba-a4f2-c931b3cd42f3
@@ -2190,19 +2298,23 @@ version = "17.4.0+0"
 # ╟─6cb037f4-96ef-4067-a886-5faecf2e82a8
 # ╠═ebaee61b-9df2-4fee-b7cc-9c5ed25f8cdc
 # ╠═a32830cf-3a01-44eb-8d34-0035fc98240c
+# ╠═6f8686db-741f-4159-ba0a-ad42e0b359ab
 # ╠═0046f186-a278-453b-9513-34a9a3ebacaa
 # ╠═e8585118-4c68-40f5-9e1c-2b3acb841af6
-# ╠═d5dc689b-ffc4-42c8-aecf-46499e86b268
 # ╠═1f1fbfc8-cc18-4cf9-a72f-3d28825adcb0
 # ╠═9fd00cca-ab31-485d-b756-2c9090d828f5
 # ╟─676642c4-8205-4523-b069-787be1040a5e
 # ╠═2fd9a503-cf69-4c80-8af1-ac68a7a18886
 # ╠═d1ac5752-b77c-4d11-8a22-0c3d273e87ea
+# ╠═2ca2f747-a132-49d9-be2b-d508319d809e
+# ╠═1493fbaa-d176-4d2c-8211-576bef53f670
+# ╠═01373f36-37ad-444c-b1a9-34c144e70c4f
 # ╠═845daeed-b4f7-4675-9d63-144668d5d7a3
 # ╟─41f064cc-6c29-41cf-8123-577606d756ad
 # ╠═d267011b-7f39-4c1a-aeee-7e51b26cd06a
 # ╠═ab139277-786b-43be-8289-617d208e9b04
 # ╠═b886179f-3fa1-496f-9f3f-fd9ec2ece093
+# ╠═1d9792dd-fad8-4dd8-8b4c-b77780ce2103
 # ╟─974459b1-18ba-4dcb-b403-ac1725364eec
 # ╠═b4416bfe-4b5c-4d0c-9864-25a50f720646
 # ╠═c93d0fd0-28ff-462e-8e59-c94b52531bf2
@@ -2216,10 +2328,16 @@ version = "17.4.0+0"
 # ╟─a21cf4fd-3e86-4ff9-9446-4825bfaedfac
 # ╟─28b4d791-acd8-4f40-8c34-838af73fbac4
 # ╟─56ca859e-fb7f-4ff9-a77d-f98635b626f4
-# ╟─114880f0-825a-48ec-92df-69a84a2a9492
+# ╠═114880f0-825a-48ec-92df-69a84a2a9492
+# ╟─55e7c25f-1a15-4a92-95e0-694247e59d8d
+# ╠═a03516b1-7ecd-4e78-9fd4-df0469a7e502
+# ╠═65d9a932-5e53-4bc8-8bee-5a9dd5efbc1a
+# ╠═8dd6951d-47f5-45f0-a82e-c6eb9676d0c7
 # ╠═5cb4b1b5-a97b-43e1-9f5f-7de3f8dee769
-# ╠═ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
+# ╠═faf4b3c1-62ee-4b1d-a72d-c2758d9bed32
 # ╠═e44c9a2b-cc8e-4a2a-8be7-dfa3c184a9c0
+# ╠═e24a31ba-5d4a-4b12-b254-99a9f499c496
+# ╠═ca752d09-37f9-4b1d-9d63-c6e3e1d78fff
 # ╠═20793d1d-391e-46d9-8fef-19ee66fe2b59
 # ╠═fa7fca08-3051-4931-bcf1-7002013c4a08
 # ╠═23ff86a1-106f-4c34-95fb-8a371962a1d2
@@ -2251,6 +2369,8 @@ version = "17.4.0+0"
 # ╠═91577acb-6a82-4266-a7c5-172409a6adf6
 # ╠═9f410c60-dae6-42bd-8fd0-828d2c6bd82a
 # ╠═49ed3c9b-1ea1-4615-ad1f-8196289ccf71
+# ╠═79b2204e-d053-4a0f-9b60-97f385fc2916
+# ╠═6ab31402-fb93-4ef3-a589-5eba61d2cc56
 # ╠═4d3c8d2f-3feb-41b1-9180-7b358a914b6b
 # ╠═d88d3f6d-6ba9-4589-b4f6-6015c5f470f8
 # ╠═0f99968e-d1da-41ec-b27e-4f56415362e8

@@ -60,17 +60,11 @@ function get_dense_networks(nt, p, q, flat_flag=false)
             Dense(lp[4], p, elu),
         ) |> xpu
 
-	# features
-	fsenc = Chain(Dense(p, p)) |> xpu
+	# instance means
+	senc_μ = Chain(Dense(p, p)) |> xpu
 
-	# weights
-    wsenc =
-        Chain(
-            Dense(p, p),
-            x->softmax(x, dims=ndims(x) - 1) # sum to 1 along instance dimension
-        ) |> xpu
-
-    # senc2 = Chain(Dense(2 * p, 2 * p, elu), Dense(2 * p, p)) |> xpu
+	# inverse variances
+    senc_loginvvar = Chain(Dense(p, p)) |> xpu
 
     nenc =
         Chain(
@@ -94,7 +88,7 @@ function get_dense_networks(nt, p, q, flat_flag=false)
 
 	dec_logvar = xpu(cat(1f0, dims=3))
 	
-    return (; senc, fsenc, wsenc, nenc, nenc_μ, nenc_logσ, dec, dec_logvar)
+    return (; senc, senc_μ, senc_loginvvar, nenc, nenc_μ, nenc_logσ, dec, dec_logvar)
 end
 
 # ╔═╡ 66bddc43-ca9f-43cd-85a3-d33b11a6c033
@@ -104,8 +98,8 @@ md"## Coherent Encoder"
 begin
 	struct BroadcastSenc
 		chain::Chain
-	    fsenc::Chain
-	    wsenc::Chain
+	    μ::Chain
+	    loginvvar::Chain
 	end
 	Flux.@functor BroadcastSenc
 	function (m::BroadcastSenc)(x)
@@ -114,19 +108,30 @@ begin
 	    X = reshape(x, n[1:end-2]..., n[end-1] * n[end])
 	    X = m.chain(X)
 
-		fX = m.fsenc(X)
-	    wX = m.wsenc(X)
+
+		
+		μ = m.μ(X)
+	    loginvvar = m.loginvvar(X)
+
+
+		n1 = size(X)
+	    μ = reshape(μ, n1[1:end-1]..., n[end-1], n[end])
+		loginvvar = reshape(loginvvar, n1[1:end-1]..., n[end-1], n[end])
+		
+		invvar = exp.(loginvvar)
+		
+		invvarG = sum(invvar, dims=ndims(μ) - 1)
+
+		varG = inv.(invvarG)
+		
+	    μG = sum(μ .* invvar, dims=ndims(μ) - 1)
+
+		cμ = μG .* varG
 	
-	    X = fX .* wX
-	
-	
-	    n1 = size(X)
-	    X = reshape(X, n1[1:end-1]..., n[end-1], n[end])
-	    X = mean(X, dims=ndims(X) - 1)
-	    X = dropdims(X, dims=ndims(X) - 1)
-	    # X = m.senc2(X)
+	    X = dropdims(cμ, dims=ndims(μ) - 1)
+
 	    X = Flux.stack(fill(X, n[end-1]), dims=length(n) - 1)
-	    return X
+	    return X, cμ, 0.5f0 .* log.(varG)
 	end
 end
 
@@ -185,7 +190,7 @@ begin
 	decb::T3
 	end
 	function (m::Reconstruct)(x, noise=true)
-	    cx = m.sencb(x)
+	    cx, cμ, clogσ = m.sencb(x)
 	
 	    nμ, nlogσ = m.nencb(x)
 
@@ -197,7 +202,7 @@ begin
 	
 	    xhat, xhat_logvar = m.decb(cat(cx, nx, dims=1))
 
-		return cx, nμ, nlogσ, xhat, xhat_logvar
+		return cx, nμ, nlogσ, xhat, xhat_logvar, cμ, clogσ
 	end
 	Flux.@functor Reconstruct
 end
@@ -223,6 +228,66 @@ begin
 	    xhat, xhat_logvar = m.decb(cat(cx, nx, dims=1))
 
 		return cx, nμ, nlogσ, xhat, xhat_logvar
+	end
+	Flux.@functor Reconstruct
+end
+
+# ╔═╡ 254daac9-1ec1-467f-a89e-ff5d4d48f3a2
+begin
+	struct Reconstruct_Coherent_Nuisance{T1,T2,T3}
+    sencb::T1
+    nencb::T2
+	decb::T3
+	end
+	function (m::Reconstruct_Coherent_Nuisance)(x)
+	    cx = m.sencb(x)
+	
+	    nμ, nlogσ = m.nencb(x)
+
+		# 
+		n = size(nμ)
+
+		# mean along datapoints and instances
+		nx = mean(nμ, dims=(2,3))
+		nx=dropdims(nx, dims=(2,3))
+		nx_coherent = Flux.stack(fill(Flux.stack(fill(nx, n[2]), dims=2), n[3]), dims=3)
+	
+	    xhat, xhat_logvar = m.decb(cat(cx, nx_coherent, dims=1))
+
+		ccx = m.sencb(xhat)
+
+		xxhat, xhat_logvar = m.decb(cat(ccx, nμ, dims=1))
+
+		return ccx, nμ, xhat, xxhat, xhat_logvar
+	end
+	Flux.@functor Reconstruct
+end
+
+# ╔═╡ a6536037-b5d4-4b23-b1b3-93553ab2a0ab
+begin
+	# We should not loose the coherent information, after shuffling the coherent codes, 
+	struct Reconstruct_Shuffle_Coherent{T1,T2,T3}
+    sencb::T1
+    nencb::T2
+	decb::T3
+	end
+	function (m::Reconstruct_Shuffle_Coherent)(x)
+	    cx = m.sencb(x)
+n = size(cx)
+		cx0 = mean(cx, dims=(3))
+		cx0 = dropdims(cx0, dims=(3))
+		cx0 = Flux.stack(fill(cx0, n[3]), dims=3)
+
+		
+	    nμ, nlogσ = m.nencb(x)
+	
+	    xhat, xhat_logvar = m.decb(cat(cx0, nμ, dims=1))
+
+		nnμ, _ = m.nencb(xhat)
+
+		xxhat, xhat_logvar = m.decb(cat(cx, nnμ, dims=1))
+
+		return cx0, nμ, xhat, xxhat, xhat_logvar
 	end
 	Flux.@functor Reconstruct
 end
@@ -1130,5 +1195,7 @@ version = "17.4.0+0"
 # ╟─5ed89ee8-325b-4757-b348-e6c1a3d277ad
 # ╠═04f9b328-edc8-4b1e-9a7c-79a215b1cf5f
 # ╠═d74b7838-98c4-4356-8a0d-1a2388369788
+# ╠═254daac9-1ec1-467f-a89e-ff5d4d48f3a2
+# ╠═a6536037-b5d4-4b23-b1b3-93553ab2a0ab
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
